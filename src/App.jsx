@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-router-dom';
-import { LayoutDashboard, Tv, Receipt, Menu, X, Users as UsersIcon, LogOut, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Tv, Receipt, Menu, X, Users as UsersIcon, LogOut, ShieldCheck, User } from 'lucide-react';
 import { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -9,6 +9,7 @@ import Platforms from './pages/Platforms';
 import Sales from './pages/Sales';
 import Distributors from './pages/Distributors';
 import Users from './pages/Users';
+import Clients from './pages/Clients';
 import Login from './pages/Login';
 
 function AppContent() {
@@ -91,6 +92,10 @@ function AppContent() {
               <UsersIcon size={20} className="text-slate-500 group-hover:text-blue-400" />
               <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white">Socios</span>
             </Link>
+            <Link to="/clients" onClick={() => setSidebarOpen(false)} className="flex items-center space-x-3 p-4 rounded-2xl hover:bg-slate-800 transition duration-200 group">
+              <User size={20} className="text-slate-500 group-hover:text-emerald-400" />
+              <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white">Clientes</span>
+            </Link>
             <Link to="/users" onClick={() => setSidebarOpen(false)} className="flex items-center space-x-3 p-4 rounded-2xl hover:bg-slate-800 transition duration-200 group border-t border-slate-800 pt-6 mt-6">
               <UsersIcon size={20} className="text-slate-500 group-hover:text-indigo-400" />
               <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white">Usuarios</span>
@@ -131,6 +136,7 @@ function AppContent() {
             <Route path="/platforms" element={<ProtectedRoute><Platforms /></ProtectedRoute>} />
             <Route path="/sales" element={<ProtectedRoute><Sales /></ProtectedRoute>} />
             <Route path="/distributors" element={<ProtectedRoute><Distributors /></ProtectedRoute>} />
+            <Route path="/clients" element={<ProtectedRoute><Clients /></ProtectedRoute>} />
             <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
             <Route path="/login" element={<Login />} />
           </Routes>

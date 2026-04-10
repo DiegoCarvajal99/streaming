@@ -28,6 +28,9 @@ export default function Sales() {
   const itemsPerPage = 15;
   const [selectedSales, setSelectedSales] = useState([]);
   const [distribuidores, setDistribuidores] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [clientSuggestions, setClientSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   
   const [formData, setFormData] = useState({
     cliente: '', 
@@ -119,6 +122,9 @@ export default function Sales() {
       
       const dSnap = await getDocs(collection(db, 'distribuidores'));
       setDistribuidores(dSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(d => d.activo));
+
+      const cSnap = await getDocs(collection(db, 'clientes'));
+      setClients(cSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     } catch (error) { console.error(error); } finally { setLoading(false); }
   };
 
@@ -263,6 +269,19 @@ export default function Sales() {
       });
 
       await Promise.all(savePromises);
+
+      // Registrar cliente si es nuevo (solo para tipo Final)
+      if (formData.tipoCliente === 'Final') {
+        const clientExists = clients.some(c => c.nombre.toLowerCase() === formData.cliente.toLowerCase());
+        if (!clientExists) {
+          await addDoc(collection(db, 'clientes'), {
+            nombre: formData.cliente,
+            contacto: formData.contacto,
+            fechaRegistro: new Date().toISOString()
+          });
+        }
+      }
+
       setIsModalOpen(false);
       setSelectedSales([]);
       fetchData();
@@ -680,9 +699,46 @@ export default function Sales() {
                       </div>
                     </div>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-3 relative">
                       <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Cliente</label>
-                      <input required placeholder="Ej: Juan Pérez" value={formData.cliente} onChange={e => setFormData({...formData, cliente: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl px-6 py-5 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                      <input 
+                        required 
+                        placeholder="Ej: Juan Pérez" 
+                        value={formData.cliente} 
+                        onChange={e => {
+                          const val = e.target.value;
+                          setFormData({...formData, cliente: val});
+                          if (val.trim()) {
+                            const filtered = clients.filter(c => c.nombre.toLowerCase().includes(val.toLowerCase()));
+                            setClientSuggestions(filtered);
+                            setShowSuggestions(true);
+                          } else {
+                            setShowSuggestions(false);
+                          }
+                        }} 
+                        onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                        className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl px-6 py-5 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" 
+                      />
+                      {showSuggestions && clientSuggestions.length > 0 && (
+                        <div className="absolute z-[110] left-0 right-0 top-[100%] mt-2 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2">
+                          {clientSuggestions.map((c, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => {
+                                setFormData({...formData, cliente: c.nombre, contacto: c.contacto});
+                                setShowSuggestions(false);
+                              }}
+                              className="w-full text-left px-6 py-4 hover:bg-slate-800 text-slate-300 hover:text-white font-bold text-xs transition-colors border-b border-slate-800 last:border-0 uppercase tracking-tighter"
+                            >
+                              <div className="flex justify-between items-center">
+                                <span>{c.nombre}</span>
+                                <span className="text-[9px] text-slate-500">{c.contacto}</span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
