@@ -223,7 +223,7 @@ export default function Users() {
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
           <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-sm"></div>
-          <div className="relative w-full max-w-lg bg-slate-900 rounded-[50px] border border-slate-800 shadow-2xl animate-in zoom-in overflow-hidden">
+          <div className="relative w-full max-w-lg bg-slate-900 rounded-[50px] border border-slate-800 shadow-2xl animate-in zoom-in-95 duration-300 overflow-hidden">
             <div className="flex items-center justify-between p-10 border-b border-slate-800 bg-slate-900/50">
               <div className="space-y-1">
                 <h3 className="text-3xl font-black italic tracking-tighter uppercase text-white">
@@ -308,7 +308,7 @@ export default function Users() {
       {isDeleteModalOpen && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
           <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-sm animate-in fade-in" onClick={() => setIsDeleteModalOpen(false)}></div>
-          <div className="relative w-full max-w-sm bg-slate-900 rounded-[40px] border border-slate-800 shadow-2xl animate-in zoom-in p-10 space-y-8 text-center">
+          <div className="relative w-full max-w-sm bg-slate-900 rounded-[40px] border border-slate-800 shadow-2xl animate-in zoom-in-95 duration-300 p-10 space-y-8 text-center">
             <div className="inline-flex items-center justify-center p-5 bg-red-500/10 rounded-3xl border border-red-500/20 text-red-500">
               <Trash2 size={32} />
             </div>

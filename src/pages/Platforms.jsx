@@ -169,7 +169,7 @@ export default function Platforms() {
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
           <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-sm"></div>
-          <div className="relative w-full max-w-lg bg-slate-900 rounded-[40px] border border-slate-800 shadow-2xl animate-in zoom-in my-auto max-h-[90vh] flex flex-col font-sans">
+          <div className="relative w-full max-w-lg bg-slate-900 rounded-[40px] border border-slate-800 shadow-2xl animate-in zoom-in-95 duration-300 my-auto max-h-[90vh] flex flex-col font-sans">
             <div className="flex items-center justify-between p-8 border-b border-slate-800 shrink-0">
               <h3 className="text-2xl font-black tracking-tight uppercase">{editingPlatform ? 'Editar Plataforma' : 'Nueva Plataforma'}</h3>
               <button onClick={handleCloseModal} className="p-2 hover:bg-slate-800 rounded-xl transition-all"><X size={24} /></button>
@@ -249,7 +249,7 @@ export default function Platforms() {
       {confirmModal.isOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 font-sans">
           <div className="fixed inset-0 bg-slate-950/95 backdrop-blur-md animate-in fade-in"></div>
-          <div className="relative w-full max-w-md bg-slate-900 rounded-[40px] border border-slate-800 p-10 shadow-3xl text-center space-y-8 animate-in zoom-in my-auto">
+          <div className="relative w-full max-w-md bg-slate-900 rounded-[40px] border border-slate-800 p-10 shadow-3xl text-center space-y-8 animate-in zoom-in-95 duration-300 my-auto">
             <div className="flex flex-col items-center gap-6">
               <div className={`p-8 rounded-3xl ${confirmModal.color === 'red' ? 'bg-red-500/10 text-red-500' : 'bg-indigo-500/10 text-indigo-500'}`}>{confirmModal.icon}</div>
               <div className="space-y-2">

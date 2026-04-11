@@ -8,7 +8,7 @@ import {
 import dayjs from 'dayjs';
 import 'dayjs/locale/es'; 
 import customParseFormat from 'dayjs/plugin/customParseFormat';
-import { TrendingUp, Users, DollarSign, ShoppingCart, Calendar, ArrowUpRight, ArrowDownRight, Activity, Percent, Zap, Clock, MessageCircle, CheckCircle2, RefreshCw, X, ChevronDown, PlusCircle, Trash2 } from 'lucide-react';
+import { TrendingUp, Users, DollarSign, ShoppingCart, Calendar, ArrowUpRight, ArrowDownRight, Activity, Percent, Zap, Clock, MessageCircle, CheckCircle2, RefreshCw, X, ChevronDown, PlusCircle, Trash2, LayoutDashboard, MoreHorizontal, Filter } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 // Extender dayjs
@@ -17,12 +17,14 @@ dayjs.extend(customParseFormat);
 dayjs.locale('es');
 
 const MESES_ABR = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
+const MESES_FULL = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
 export default function Dashboard() {
   const { userMetadata } = useAuth();
   const [allSales, setAllSales] = useState([]);
   const [data, setData] = useState([]);
-  const [months, setMonths] = useState([]);
+  const [yearFilter, setYearFilter] = useState(dayjs().year().toString());
+  const [yearOptions, setYearOptions] = useState([dayjs().year().toString()]);
   const [selectedDay, setSelectedDay] = useState(dayjs().format('YYYY-MM-DD'));
   const [stats, setStats] = useState({
     totalGanancia: 0,
@@ -96,7 +98,19 @@ export default function Dashboard() {
       }
     }
 
-    const message = `¡Hola ${sale.cliente}! 👋 Te saludamos de Grupoxua. Te recordamos que pronto vence tu ${platformText}. ¿Deseas renovar el servicio? 🚀`;
+    const expiryDate = dayjs(sale.fechaVencimiento);
+    const today = dayjs().startOf('day');
+    const diffDays = expiryDate.startOf('day').diff(today, 'day');
+
+    let message = '';
+    
+    if (diffDays > 0) {
+      const formattedDate = expiryDate.format('D [de] MMMM [del] YYYY');
+      message = `Hola, espero que se encuentre muy bien. Le escribo para recordarle que su ${platformText} vence el ${formattedDate}. Aún cuenta con ${diffDays} ${diffDays === 1 ? 'día' : 'días'} de servicio, ¿le gustaría realizar la renovación de una vez para que no se quede sin acceso?`;
+    } else {
+      message = `Hola, espero que se encuentre muy bien. Le escribo para informarle que su ${platformText} vence el día de hoy. ¿Le gustaría realizar la renovación de su cuenta para que no pierda el acceso al contenido?`;
+    }
+
     const cleanPhone = sale.contacto.replace(/\D/g, '');
 
     // Si el contacto empieza por http, asumimos que es un link de grupo
@@ -121,20 +135,25 @@ export default function Dashboard() {
       setPlatforms(plats);
       setDistribuidores(dSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(d => d.activo));
       
-      const uniqueMonths = [...new Set(sales.map(s => s.mesRegistro || dayjs(s.fechaCompra).format('MMMM YYYY')))];
-      uniqueMonths.sort((a, b) => dayjs(b, 'MMMM YYYY').diff(dayjs(a, 'MMMM YYYY')));
+      const adjustedYears = [...new Set(sales.map(s => {
+        const d = parseDate(s.fechaVencimiento || s.fechaVenta).subtract(1, 'month');
+        return d.isValid() ? d.year().toString() : dayjs().year().toString();
+      }))];
       
-      setMonths(uniqueMonths);
+      const currentYear = dayjs().year().toString();
+      const allYears = [...new Set([currentYear, ...adjustedYears])].sort((a, b) => b - a);
+      setYearOptions(allYears);
+      
       setAllSales(sales);
       
       const today = dayjs().format('YYYY-MM-DD');
       const expiringToday = sales.filter(s => 
-        s.estado !== 'Renovado' && 
-        dayjs(s.fechaVencimiento).format('YYYY-MM-DD') === today
+        s.estado === 'Activo' && 
+        parseDate(s.fechaVencimiento).format('YYYY-MM-DD') === today
       );
       setTodayExpiries(expiringToday);
 
-      processData(sales, 'Todos', 'Todos');
+      processData(sales, segmentFilter, monthFilter, yearFilter);
     } catch (error) {
       console.error("Error fetching data:", error);
     } finally {
@@ -257,6 +276,22 @@ export default function Dashboard() {
       });
 
       await Promise.all(savePromises);
+
+      // Registrar cliente si es nuevo (solo para tipo Final)
+      if (formData.tipoCliente === 'Final' && formData.cliente?.trim()) {
+        const cSnap = await getDocs(collection(db, 'clientes'));
+        const existingClients = cSnap.docs.map(d => d.data());
+        const clientExists = existingClients.some(c => c.nombre?.toLowerCase() === formData.cliente.toLowerCase());
+        
+        if (!clientExists) {
+          await addDoc(collection(db, 'clientes'), {
+            nombre: formData.cliente,
+            contacto: formData.contacto,
+            fechaRegistro: new Date().toISOString()
+          });
+        }
+      }
+
       setIsModalOpen(false);
       fetchSales();
     } catch (error) {
@@ -266,54 +301,85 @@ export default function Dashboard() {
     }
   };
 
-  const processData = (sales, segment, month) => {
+  const parsePrice = (v) => {
+    if (typeof v === 'number') return v;
+    if (!v) return 0;
+    const clean = String(v).replace(/[^-\d]/g, '');
+    return Number(clean) || 0;
+  };
+
+  const getGanancia = (s) => {
+     if (typeof s.ganancia === 'number') return s.ganancia;
+     const keys = Object.keys(s);
+     const key = keys.find(k => k.toLowerCase() === 'ganancia' || k.toLowerCase().includes('utilidad'));
+     return key ? parsePrice(s[key]) : 0;
+  };
+
+  const parseDate = (s) => {
+    if (s?.seconds) return dayjs(s.toDate());
+    return dayjs(s);
+  };
+
+  const processData = (sales, segment, month, year) => {
     let filtered = [...sales];
     if (segment !== 'Todos') filtered = filtered.filter(s => s.tipoCliente === segment);
     
-    const currentYear = dayjs().year();
+    // El mapa de meses siempre se inicializa con los nombres abreviados de MESES_ABR
     const monthlyDataMap = {};
-    MESES_ABR.forEach((m, index) => { monthlyDataMap[index] = { name: m, totalVentas: 0, ganancia: 0, index: index }; });
+    MESES_ABR.forEach((m, index) => { 
+       monthlyDataMap[index] = { name: m, totalVentas: 0, ganancia: 0, index: index }; 
+    });
 
-    // Función unificada y ultra-robusta de parseo
-    const parsePrice = (v) => {
-      if (typeof v === 'number') return v;
-      if (!v) return 0;
-      const clean = String(v).replace(/[^-\d]/g, '');
-      return Number(clean) || 0;
+    // Lógica Contable: La venta pertenece al mes en que se realizó la transacción
+    const getAccountingDate = (sale) => {
+      return parseDate(sale.fechaCompra || sale.fechaVenta);
     };
 
-    const getGanancia = (s) => {
-       const keys = Object.keys(s);
-       const key = keys.find(k => k.toLowerCase().includes('ganancia') || k.toLowerCase().includes('utilidad') || k.toLowerCase().includes('profit'));
-       return key ? parsePrice(s[key]) : 0;
-    };
+    // Filtrar por año seleccionado (usando la fecha contable ya ajustada)
+    filtered = filtered.filter(s => {
+       const d = getAccountingDate(s);
+       return d.isValid() && d.year().toString() === year;
+    });
 
+    // Si se selecciona un mes, filtrar por índice de mes (0=Enero, 1=Febrero, etc.)
+    // Usamos MESES_FULL para obtener el índice a partir del nombre
     if (month !== 'Todos') {
-      filtered = filtered.filter(s => (s.mesRegistro || dayjs(s.fechaCompra).format('MMMM YYYY')) === month);
+      const selectedMonthIdx = MESES_FULL.indexOf(month.toLowerCase());
+      filtered = filtered.filter(s => {
+         const d = getAccountingDate(s);
+         return d.month() === selectedMonthIdx;
+      });
     }
 
+    // Acumular datos en el mapa mensual
     filtered.forEach(sale => {
-      // Priorizar mesRegistro (ej: "Mayo 2026") para las gráficas mensuales
-      let dateSource = dayjs(sale.fechaCompra);
-      if (sale.mesRegistro) {
-        const parsed = dayjs(sale.mesRegistro, 'MMMM YYYY', 'es');
-        if (parsed.isValid()) dateSource = parsed;
-      }
-      
-      if (dateSource.isValid() && dateSource.year() === currentYear) {
-        const monthIndex = dateSource.month();
-        monthlyDataMap[monthIndex].totalVentas += 1;
-        monthlyDataMap[monthIndex].ganancia += getGanancia(sale);
+      const d = getAccountingDate(sale);
+      if (d.isValid()) {
+        const monthIndex = d.month();
+        if (monthlyDataMap[monthIndex] !== undefined) {
+          monthlyDataMap[monthIndex].totalVentas += 1;
+          monthlyDataMap[monthIndex].ganancia += getGanancia(sale);
+        }
       }
     });
 
-    const chartData = Object.values(monthlyDataMap).sort((a, b) => a.index - b.index);
+    let chartData = Object.values(monthlyDataMap).sort((a, b) => a.index - b.index);
+    
+    // Si el usuario seleccionó un mes específico, mostrar SOLO ese mes en la gráfica
+    if (month !== 'Todos') {
+      const selectedMonthIdx = MESES_FULL.indexOf(month.toLowerCase());
+      chartData = chartData.filter(d => d.index === selectedMonthIdx);
+    }
+
     const totalGanancia = filtered.reduce((sum, s) => sum + getGanancia(s), 0);
     const totalVentas = filtered.length;
     const vDist = filtered.filter(s => s.tipoCliente === 'Distribuidor').length;
     
     setStats({
-      totalGanancia, totalVentas, ventasFinal: totalVentas - vDist, ventasDistribuidor: vDist,
+      totalGanancia, 
+      totalVentas, 
+      ventasFinal: filtered.filter(s => s.tipoCliente === 'Final').length, 
+      ventasDistribuidor: vDist,
       ticketPromedio: totalVentas > 0 ? (totalGanancia / totalVentas) : 0
     });
     setData(chartData);
@@ -325,31 +391,18 @@ export default function Dashboard() {
     const day = dayjs(selectedDay).format('YYYY-MM-DD');
     const yesterday = dayjs(selectedDay).subtract(1, 'day').format('YYYY-MM-DD');
 
-    const parsePrice = (v) => {
-      if (typeof v === 'number') return v;
-      if (!v) return 0;
-      const clean = String(v).replace(/[^-\d]/g, '');
-      return Number(clean) || 0;
-    };
-
-    const getGanancia = (s) => {
-       const keys = Object.keys(s);
-       const key = keys.find(k => k.toLowerCase().includes('ganancia') || k.toLowerCase().includes('utilidad') || k.toLowerCase().includes('profit'));
-       return key ? parsePrice(s[key]) : 0;
-    };
-
     let filteredForDaily = [...allSales];
     if (segmentFilter !== 'Todos') {
       filteredForDaily = filteredForDaily.filter(s => s.tipoCliente === segmentFilter);
     }
 
     const todaySales = filteredForDaily.filter(s => {
-      const d = dayjs(s.fechaCompra || s.fechaVenta || (s.fechaCompra?.seconds ? s.fechaCompra.toDate() : null));
+      const d = parseDate(s.fechaCompra || s.fechaVenta);
       return d.isValid() && d.format('YYYY-MM-DD') === day;
     });
 
     const yesterdaySales = filteredForDaily.filter(s => {
-      const d = dayjs(s.fechaCompra || s.fechaVenta || (s.fechaCompra?.seconds ? s.fechaCompra.toDate() : null));
+      const d = parseDate(s.fechaCompra || s.fechaVenta);
       return d.isValid() && d.format('YYYY-MM-DD') === yesterday;
     });
 
@@ -368,10 +421,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (allSales.length > 0) {
-      processData(allSales, segmentFilter, monthFilter);
+      processData(allSales, segmentFilter, monthFilter, yearFilter);
       processDailyStats();
     }
-  }, [segmentFilter, monthFilter, allSales, selectedDay]);
+  }, [segmentFilter, monthFilter, yearFilter, allSales, selectedDay]);
 
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length && showTooltip) {
@@ -401,74 +454,92 @@ export default function Dashboard() {
   return (
     <div className="space-y-12 animate-in fade-in slide-in-from-bottom-6 duration-1000">
       {/* HEADER & FILTERS */}
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-8">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-3xl sm:text-4xl font-black italic tracking-tighter text-white">
-              {getGreetingText()} <span className="text-indigo-500">{userMetadata?.name?.split(' ')[0] || 'Administrador'}</span>
-            </h1>
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
+          <div className="space-y-1">
+            <div className="flex items-center gap-3 mb-1">
+              <h1 className="text-3xl sm:text-4xl font-black italic tracking-tighter text-white">
+                {getGreetingText()} <span className="text-indigo-500">{userMetadata?.name?.toString().split(' ')[0] || 'Administrador'}</span>
+              </h1>
+            </div>
+            <div className="flex items-center gap-3">
+               <div className="w-12 h-1 bg-slate-700 rounded-full"></div>
+               <p className="text-slate-500 font-bold uppercase text-[10px] tracking-[0.2em]">Panel • {yearFilter}</p>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-             <div className="w-12 h-1 bg-slate-700 rounded-full"></div>
-             <p className="text-slate-500 font-bold uppercase text-[10px] tracking-[0.2em]">Panel de Control • {dayjs().year()}</p>
+
+          <div className="w-full xl:w-auto flex flex-col sm:flex-row items-center gap-3 bg-slate-900/40 p-2 sm:p-3 rounded-[32px] sm:rounded-[40px] border border-slate-800 shadow-2xl">
+             <div className="grid grid-cols-2 sm:flex items-center gap-3 w-full sm:w-auto">
+                {/* FILTRO AÑO */}
+                <div className="relative group">
+                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-indigo-400 transition-colors" size={14} />
+                  <select 
+                    value={yearFilter}
+                    onChange={(e) => setYearFilter(e.target.value)}
+                    className="w-full bg-slate-800 border-none rounded-2xl pl-9 pr-6 py-3.5 text-[9px] sm:text-[10px] font-black uppercase text-white appearance-none cursor-pointer focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    {yearOptions.map(y => (
+                      <option key={y} value={y} className="bg-slate-900">{y}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                </div>
+
+                {/* FILTRO MES */}
+                <div className="relative group">
+                  <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-purple-400 transition-colors" size={14} />
+                  <select 
+                    value={monthFilter}
+                    onChange={(e) => setMonthFilter(e.target.value)}
+                    className="w-full bg-slate-800 border-none rounded-2xl pl-9 pr-6 py-3.5 text-[9px] sm:text-[10px] font-black uppercase text-white appearance-none cursor-pointer focus:ring-2 focus:ring-purple-500/20"
+                  >
+                    <option value="Todos" className="bg-slate-900">TODOS</option>
+                    {(parseInt(yearFilter) === dayjs().year()
+                      ? MESES_FULL.slice(0, dayjs().month() + 1)
+                      : MESES_FULL
+                    ).map(m => (
+                      <option key={m} value={m} className="bg-slate-900 capitalize">{m}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                </div>
+             </div>
+
+             <div className="flex items-center bg-slate-950/40 p-1 rounded-[22px] border border-slate-800/50 w-full sm:w-auto">
+                <button onClick={() => setSegmentFilter('Todos')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-[18px] text-[9px] sm:text-[10px] font-black uppercase transition-all duration-300 ${segmentFilter === 'Todos' ? 'bg-indigo-600 text-white shadow-xl' : 'text-slate-500'}`}>Todos</button>
+                <button onClick={() => setSegmentFilter('Final')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-[18px] text-[9px] sm:text-[10px] font-black uppercase transition-all duration-300 ${segmentFilter === 'Final' ? 'bg-purple-600 text-white shadow-xl' : 'text-slate-500'}`}>FINAL</button>
+                <button onClick={() => setSegmentFilter('Distribuidor')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-[18px] text-[9px] sm:text-[10px] font-black uppercase transition-all duration-300 ${segmentFilter === 'Distribuidor' ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-500'}`}>SOCIO</button>
+             </div>
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-900/40 p-3 rounded-[35px] border border-slate-800 shadow-2xl">
-           {/* FILTRO MES */}
-           <div className="relative w-full sm:w-56 group">
-             <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-indigo-400 transition-colors" size={18} />
-             <select 
-               value={monthFilter}
-               onChange={(e) => setMonthFilter(e.target.value)}
-               className="w-full bg-slate-800 border-none rounded-2xl pl-12 pr-6 py-4 text-[10px] font-black uppercase text-white appearance-none cursor-pointer focus:ring-2 focus:ring-indigo-500/20"
-             >
-               <option value="Todos" className="bg-slate-900">Historial Global</option>
-               {months.map(m => (
-                 <option key={m} value={m} className="bg-slate-900 capitalize">{m}</option>
-               ))}
-             </select>
-             <ChevronDown size={14} className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-           </div>
-
-           <div className="flex items-center bg-slate-950/40 p-1.5 rounded-[22px] border border-slate-800/50">
-              <button onClick={() => setSegmentFilter('Todos')} className={`px-6 py-2.5 rounded-[18px] text-[10px] font-black uppercase transition-all duration-300 ${segmentFilter === 'Todos' ? 'bg-indigo-600 text-white shadow-xl scale-105' : 'text-slate-500 hover:text-slate-300'}`}>Todos</button>
-              <button onClick={() => setSegmentFilter('Final')} className={`px-6 py-2.5 rounded-[18px] text-[10px] font-black uppercase transition-all duration-300 ${segmentFilter === 'Final' ? 'bg-purple-600 text-white shadow-xl scale-105' : 'text-slate-500 hover:text-slate-300'}`}>Clientes</button>
-              <button onClick={() => setSegmentFilter('Distribuidor')} className={`px-6 py-2.5 rounded-[18px] text-[10px] font-black uppercase transition-all duration-300 ${segmentFilter === 'Distribuidor' ? 'bg-blue-600 text-white shadow-xl scale-105' : 'text-slate-500 hover:text-slate-300'}`}>Distribuidor</button>
-           </div>
-        </div>
-      </div>
-
-      {/* FLASH DAILY SUMMARY (NEW HERO SECTION) */}
-      <div className="bg-gradient-to-r from-indigo-900/40 via-slate-900/40 to-slate-950/40 border border-slate-800 p-1 rounded-[50px] shadow-2xl group overflow-hidden">
-        <div className="flex flex-col lg:flex-row items-center justify-between p-8 sm:p-12 gap-10">
-           <div className="flex flex-col sm:flex-row items-center gap-8 w-full lg:w-max">
-              <div className="p-6 bg-white/5 rounded-[35px] border border-white/10 group-hover:scale-110 transition-transform duration-700">
+      <div className="bg-slate-900/40 border border-slate-800 p-6 sm:p-10 rounded-[40px] shadow-2xl group overflow-hidden relative">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-8 sm:gap-12">
+           <div className="flex flex-col sm:flex-row items-center gap-6 sm:gap-10">
+              <div className="p-6 bg-indigo-600/10 rounded-[30px] border border-indigo-500/20 group-hover:scale-110 transition-transform duration-700">
                  <Zap size={32} className="text-amber-400 fill-amber-400/20" />
               </div>
               <div className="text-center sm:text-left">
-                 <h3 className="text-3xl font-black text-white uppercase italic tracking-tighter">Resumen Diario</h3>
-                 <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest flex items-center gap-2 justify-center sm:justify-start mt-1">
-                    <Clock size={12}/> Métricas Flash Tiempo Real
+                 <h3 className="text-3xl font-black text-white uppercase italic tracking-tighter leading-none">Resumen Diario</h3>
+                 <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest flex items-center gap-2 justify-center sm:justify-start mt-2">
+                    <Clock size={12}/> Métricas en Tiempo Real
                  </p>
               </div>
               
-              <div className="relative mx-auto sm:mx-0 group cursor-pointer" onClick={(e) => {
+              <div className="relative group cursor-pointer" onClick={(e) => {
                 const input = e.currentTarget.querySelector('input');
                 if (input && input.showPicker) input.showPicker();
               }}>
-                <div className="absolute inset-0 bg-slate-900/40 group-hover:bg-indigo-500/10 rounded-2xl transition-all border border-slate-800 group-hover:border-indigo-500/50 group-hover:shadow-[0_0_20px_-5px_rgba(99,102,241,0.2)]"></div>
-                <div className="relative flex items-center px-6 py-4 gap-6 bg-slate-800/20 rounded-2xl">
+                <div className="absolute inset-0 bg-slate-900/40 group-hover:bg-indigo-500/10 rounded-2xl transition-all border border-slate-800 group-hover:border-indigo-500/50"></div>
+                <div className="relative flex items-center px-4 py-3 gap-4 bg-slate-800/20 rounded-2xl">
                   <div className="flex flex-col items-center">
-                    <span className="text-2xl font-black text-indigo-400 leading-none">{dayjs(selectedDay).format('DD')}</span>
-                    <span className="text-[8px] font-black text-slate-500 uppercase tracking-tighter">{dayjs(selectedDay).format('MMM')}</span>
+                    <span className="text-xl font-black text-indigo-400 leading-none">{dayjs(selectedDay).format('DD')}</span>
+                    <span className="text-[7px] font-black text-slate-500 uppercase tracking-tighter">{dayjs(selectedDay).format('MMM')}</span>
                   </div>
-                  <div className="w-[1px] h-8 bg-slate-800"></div>
-                  <div className="flex-1 min-w-[140px]">
-                    <h4 className="text-[10px] font-black text-white uppercase tracking-widest leading-none">{dayjs(selectedDay).format('dddd')}</h4>
-                    <p className="text-[9px] font-bold text-slate-500 uppercase mt-1">{dayjs(selectedDay).format('MMMM [del] YYYY')}</p>
+                  <div className="w-[1px] h-6 bg-slate-800"></div>
+                  <div className="flex-1 min-w-[100px]">
+                    <h4 className="text-[9px] font-black text-white uppercase tracking-widest leading-none">{dayjs(selectedDay).format('dddd')}</h4>
                   </div>
-                  <Calendar className="text-white group-hover:text-indigo-400 transition-colors" size={18} />
+                  <Calendar className="text-slate-500 group-hover:text-indigo-400 transition-colors" size={16} />
                 </div>
                 <input 
                   type="date" 
@@ -479,32 +550,34 @@ export default function Dashboard() {
               </div>
            </div>
 
-           <div className="flex flex-wrap items-center justify-center gap-8 w-full lg:w-auto">
+           <div className="flex flex-col sm:flex-row items-center gap-8 lg:gap-12">
               <div className="flex flex-col items-center sm:items-end">
                  <span className="text-slate-500 text-[9px] font-black uppercase tracking-widest mb-1">Ventas Hoy</span>
                  <div className="flex items-center gap-3">
-                    <h4 className="text-5xl font-black text-white tracking-tighter">{dailyStats.ventas}</h4>
+                    <h4 className="text-5xl font-black text-white tracking-tighter leading-none">{dailyStats.ventas}</h4>
                     <div className={`p-1.5 rounded-lg flex items-center justify-center ${dailyStats.comparativaVentas >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
                        {dailyStats.comparativaVentas >= 0 ? <ArrowUpRight size={16}/> : <ArrowDownRight size={16}/>}
                        <span className="text-[10px] font-black ml-1">{Math.abs(dailyStats.comparativaVentas)}</span>
                     </div>
                  </div>
               </div>
-                       {/* Ganancia del dia con comparativa visual */}
-                  <div className="flex-1 w-full bg-indigo-600/10 border border-indigo-500/20 p-8 rounded-[40px] flex items-center justify-between group h-full relative overflow-hidden">
-                     <div className="flex items-center gap-6">
-                        <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform duration-500 shadow-inner">
-                           <TrendingUp size={32} />
-                        </div>
-                        <div className="flex flex-col">
-                           <span className="text-[10px] font-black uppercase text-indigo-400 tracking-[0.2em] mb-1">Ganancia Hoy</span>
-                           <h4 className="text-5xl font-black text-emerald-400 tracking-tighter">${dailyStats.ganancia.toLocaleString()}</h4>
-                        </div>
-                     </div>
-                  </div>
-   </div>
+
+              <div className="w-[1px] h-12 bg-slate-800 hidden sm:block"></div>
+
+              <div className="w-full sm:w-auto bg-indigo-600/10 border border-indigo-500/20 p-5 pr-8 rounded-[30px] flex items-center gap-6 hover:bg-indigo-600/20 transition-all cursor-default">
+                 <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 shadow-inner">
+                    <TrendingUp size={24} />
+                 </div>
+                 <div className="flex flex-col">
+                    <span className="text-[9px] font-black uppercase text-indigo-400 tracking-[0.2em] mb-1">Ganancia Hoy</span>
+                    <h4 className="text-3xl font-black text-emerald-400 tracking-tighter leading-none">
+                      ${dailyStats.ganancia.toLocaleString()}
+                    </h4>
+                 </div>
+              </div>
            </div>
         </div>
+      </div>
 
       {/* ZONA DE ACCIÓN: VENCIMIENTOS DE HOY (PREMIUM UI) */}
       <div className="space-y-6">
@@ -517,53 +590,80 @@ export default function Dashboard() {
         </div>
 
         {todayExpiries.length > 0 ? (
-          <div className="bg-slate-900/40 border border-slate-800 rounded-[40px] overflow-hidden">
-             <table className="w-full text-left">
-               <thead>
-                 <tr className="border-b border-slate-800">
-                    <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest">Cliente</th>
-                    <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest">Plataforma</th>
-                    <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest text-center">Perfil</th>
-                    <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest text-right">Acciones</th>
-                 </tr>
-               </thead>
-               <tbody className="divide-y divide-slate-800/50">
-                  {todayExpiries.map((sale, idx) => (
-                    <tr key={idx} className="group hover:bg-slate-800/20 transition-all duration-300">
-                      <td className="px-8 py-5">
-                         <div className="flex flex-col gap-1">
-                            <span className="text-[11px] font-black text-white uppercase">{sale.cliente}</span>
-                            <span className="text-[8px] font-bold text-slate-500 uppercase">{sale.contacto}</span>
-                         </div>
-                      </td>
-                      <td className="px-8 py-5">
-                         <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-slate-800 p-1 flex items-center justify-center border border-slate-700">
-                               <img src={sale.plataformaImagenUrl} className="w-full h-full object-contain" alt="" />
-                            </div>
-                            <span className="text-[10px] font-black text-slate-300 uppercase">{sale.plataformaNombre}</span>
-                         </div>
-                      </td>
-                      <td className="px-8 py-5 text-center">
-                         <span className="px-3 py-1 bg-slate-950/50 border border-slate-800 rounded-lg text-[10px] font-mono text-slate-400">{sale.perfil || 'N/A'}</span>
-                      </td>
-                      <td className="px-8 py-5">
-                         <div className="flex items-center justify-end gap-3">
-                            <button onClick={() => handleWhatsAppReminder(sale)} className="p-2.5 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-xl transition-all" title="WhatsApp"><MessageCircle size={16}/></button>
-                            <button onClick={() => handleOpenBulkRenovate([sale.id])} className="p-2.5 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500 hover:text-white rounded-xl transition-all" title="Renovar"><RefreshCw size={16}/></button>
-                         </div>
-                      </td>
-                    </tr>
-                  ))}
-               </tbody>
-             </table>
+          <div className="space-y-4">
+            {/* VISTA ESCRITORIO (TABLA) */}
+            <div className="hidden sm:block bg-slate-900/40 border border-slate-800 rounded-[40px] overflow-hidden shadow-2xl">
+               <table className="w-full text-left">
+                 <thead>
+                   <tr className="border-b border-slate-800">
+                      <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest">Cliente</th>
+                      <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest">Plataforma</th>
+                      <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest text-center">Perfil</th>
+                      <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest text-right">Acciones</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y divide-slate-800/50">
+                    {todayExpiries.map((sale, idx) => (
+                      <tr key={idx} className="group hover:bg-slate-800/20 transition-all duration-300">
+                        <td className="px-8 py-5">
+                           <div className="flex flex-col gap-1">
+                              <span className="text-[11px] font-black text-white uppercase">{sale.cliente}</span>
+                              <span className="text-[8px] font-bold text-slate-500 uppercase">{sale.contacto}</span>
+                           </div>
+                        </td>
+                        <td className="px-8 py-5">
+                           <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-lg bg-slate-800 p-1 flex items-center justify-center border border-slate-700">
+                                 <img src={sale.plataformaImagenUrl} className="w-full h-full object-contain" alt="" />
+                              </div>
+                              <span className="text-[10px] font-black text-slate-300 uppercase">{sale.plataformaNombre}</span>
+                           </div>
+                        </td>
+                        <td className="px-8 py-5 text-center">
+                           <span className="px-3 py-1 bg-slate-950/50 border border-slate-800 rounded-lg text-[10px] font-mono text-slate-400">{sale.perfil || 'N/A'}</span>
+                        </td>
+                        <td className="px-8 py-5">
+                           <div className="flex items-center justify-end gap-3">
+                              <button onClick={() => handleWhatsAppReminder(sale)} className="p-2.5 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-xl transition-all" title="WhatsApp"><MessageCircle size={16}/></button>
+                              <button onClick={() => handleOpenBulkRenovate([sale.id])} className="p-2.5 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500 hover:text-white rounded-xl transition-all" title="Renovar"><RefreshCw size={16}/></button>
+                           </div>
+                        </td>
+                      </tr>
+                    ))}
+                 </tbody>
+               </table>
+            </div>
+
+            {/* VISTA MÓVIL (CARDS) */}
+            <div className="sm:hidden space-y-3">
+              {todayExpiries.map((sale, idx) => (
+                <div key={idx} className="bg-slate-900/40 border border-slate-800 p-5 rounded-3xl flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-4 flex-1 min-w-0">
+                    <div className="w-10 h-10 rounded-2xl bg-slate-800 p-1.5 flex items-center justify-center border border-slate-700 flex-shrink-0">
+                      <img src={sale.plataformaImagenUrl} className="w-full h-full object-contain" alt="" />
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-[11px] font-black text-white uppercase truncate">{sale.cliente}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[8px] font-bold text-indigo-400 uppercase tracking-widest">{sale.plataformaNombre}</span>
+                        <span className="px-1.5 py-0.5 bg-slate-950/50 rounded-md text-[7px] font-mono text-slate-500">{sale.perfil || 'N/A'}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => handleWhatsAppReminder(sale)} className="p-3 bg-emerald-500/10 text-emerald-500 rounded-xl active:scale-95 transition-all"><MessageCircle size={16}/></button>
+                    <button onClick={() => handleOpenBulkRenovate([sale.id])} className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl active:scale-95 transition-all"><RefreshCw size={16}/></button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
-          <div className="bg-slate-900/20 border border-slate-800/50 rounded-[40px] p-12 text-center border-dashed">
-            <div className="inline-flex p-6 bg-emerald-500/5 rounded-full text-emerald-500 mb-4 animate-bounce">
+          <div className="bg-slate-900/20 border border-slate-800/50 rounded-[40px] p-8 sm:p-12 text-center border-dashed">
+            <div className="inline-flex p-5 sm:p-6 bg-emerald-500/5 rounded-full text-emerald-500 mb-4 animate-bounce">
               <CheckCircle2 size={32} />
             </div>
-            <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em]">¡Todo al día! No hay vencimientos para hoy.</p>
+            <p className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-[0.3em]">¡Todo al día! No hay vencimientos para hoy.</p>
           </div>
         )}
       </div>
@@ -623,11 +723,12 @@ export default function Dashboard() {
            </div>
            <div className="h-full w-full">
              <ResponsiveContainer width="100%" height="100%">
-               <AreaChart data={data} onMouseMove={handleChartMouseMove} onMouseLeave={handleChartMouseLeave}>
+               <AreaChart data={data} margin={{ top: 40, right: 30, left: 30, bottom: 20 }} onMouseMove={handleChartMouseMove} onMouseLeave={handleChartMouseLeave}>
                   <defs><linearGradient id="colorGanancia" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient></defs>
                   <XAxis dataKey="name" stroke="#475569" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 900, fill: '#FFFFFF'}} dy={15}/>
+                  <YAxis hide domain={[0, 'auto']} />
                   <Tooltip content={<CustomTooltip />} position={showTooltip ? tooltipPos : { x: -1000, y: -1000 }} isAnimationActive={false}/>
-                  <Area type="monotone" dataKey="ganancia" name="GANANCIA" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorGanancia)" />
+                  <Area type="linear" dataKey="ganancia" name="GANANCIA" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorGanancia)" />
                </AreaChart>
              </ResponsiveContainer>
            </div>
@@ -637,19 +738,19 @@ export default function Dashboard() {
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-md"></div>
-          <div className="relative w-full max-w-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/20 rounded-[50px] border border-slate-800 shadow-2xl animate-in zoom-in h-[90vh] flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between p-8 sm:p-10 border-b border-slate-800 shrink-0">
-              <h3 className="text-3xl font-black italic tracking-tighter uppercase text-white">Renovar / Venta</h3>
+          <div className="relative w-full max-w-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/20 rounded-[32px] border border-slate-800 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-300 h-[85vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-7 py-5 border-b border-slate-800 shrink-0">
+              <h3 className="text-xl font-black italic tracking-tighter uppercase text-white">Renovar / Venta</h3>
               <button onClick={() => setIsModalOpen(false)} className="p-3 hover:bg-slate-800 rounded-2xl transition-all"><X size={24} /></button>
             </div>
             
-            <form onSubmit={handleSubmit} className="p-8 sm:p-12 space-y-12 overflow-y-auto scrollbar-hide flex-1">
-              <div className="space-y-10">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+            <form onSubmit={handleSubmit} className="px-7 py-5 space-y-6 overflow-y-auto scrollbar-hide flex-1">
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-3">
                     <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Segmento</label>
                     <div className="relative">
-                      <select required value={formData.tipoCliente} onChange={e => setFormData({...formData, tipoCliente: e.target.value, cliente: '', contacto: ''})} className="w-full bg-slate-900 border border-slate-700/50 rounded-2xl px-6 py-5 text-white font-black text-xs appearance-none cursor-pointer">
+                      <select required value={formData.tipoCliente} onChange={e => setFormData({...formData, tipoCliente: e.target.value, cliente: '', contacto: ''})} className="w-full bg-slate-900 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs appearance-none cursor-pointer">
                         <option value="" disabled className="bg-slate-900">SELECCIONAR...</option>
                         <option value="Final" className="bg-slate-900">CLIENTE FINAL</option>
                         <option value="Distribuidor" className="bg-slate-900">DISTRIBUIDOR</option>
@@ -681,7 +782,7 @@ export default function Dashboard() {
                   ) : (
                     <div className="space-y-3">
                       <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Cliente</label>
-                      <input required placeholder="Ej: Juan Pérez" value={formData.cliente} onChange={e => setFormData({...formData, cliente: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl px-6 py-5 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                      <input required placeholder="Ej: Juan Pérez" value={formData.cliente} onChange={e => setFormData({...formData, cliente: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
                     </div>
                   )}
                 </div>
@@ -690,7 +791,7 @@ export default function Dashboard() {
                   <div className={`transition-all duration-500 ease-out overflow-hidden ${formData.tipoCliente === 'Final' ? 'w-full sm:w-1/2 opacity-100 translate-x-0' : 'w-0 h-0 opacity-0 -translate-x-10 pointer-events-none'}`}>
                     <div className="space-y-3 min-w-[200px]">
                       <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">WhatsApp</label>
-                      <input required={formData.tipoCliente === 'Final'} placeholder="+57 300 000 0000" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl px-6 py-5 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                      <input required={formData.tipoCliente === 'Final'} placeholder="+57 300 000 0000" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
                     </div>
                   </div>
                   <div className="w-full sm:w-1/2 space-y-3 transition-all duration-500 ease-out">
@@ -720,15 +821,14 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <div className="flex flex-col sm:flex-row items-center gap-6 justify-between pt-6 border-t border-slate-800">
+                <div className="flex flex-col sm:flex-row items-center gap-6 justify-between pt-4 border-t border-slate-800">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-indigo-500/10 rounded-2xl flex items-center justify-center text-indigo-400"><ShoppingCart size={20}/></div>
+                    <div className="w-8 h-8 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400"><ShoppingCart size={16}/></div>
                     <div className="flex flex-col">
-                      <h4 className="text-sm font-black text-white uppercase italic tracking-tighter">Canasta de Plataformas</h4>
-                      <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Añade plataformas al combo</p>
+                      <h4 className="text-xs font-black text-white uppercase italic tracking-tighter">Canasta de Plataformas</h4>
                     </div>
                   </div>
-                  <button type="button" onClick={addItem} className="px-6 py-3 bg-indigo-600/10 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-2xl transition-all font-black text-[9px] uppercase tracking-widest border border-indigo-500/20 flex items-center gap-2">
+                  <button type="button" onClick={addItem} className="px-4 py-2 bg-indigo-600/10 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-xl transition-all font-black text-[9px] uppercase tracking-widest border border-indigo-500/20 flex items-center gap-2">
                     <PlusCircle size={14} /> Añadir Cuenta
                   </button>
                 </div>

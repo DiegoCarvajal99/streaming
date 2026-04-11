@@ -187,7 +187,7 @@ export default function Clients() {
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-md"></div>
-          <div className="relative w-full max-w-lg bg-slate-900 rounded-[50px] border border-slate-800 shadow-2xl animate-in zoom-in p-10 space-y-10">
+          <div className="relative w-full max-w-lg bg-slate-900 rounded-[50px] border border-slate-800 shadow-2xl animate-in zoom-in-95 duration-300 p-10 space-y-10">
             <div className="flex items-center justify-between">
               <div className="space-y-1">
                 <h3 className="text-3xl font-black italic uppercase text-white tracking-tighter">{formData.id ? 'Editar Cliente' : 'Nuevo Cliente'}</h3>
