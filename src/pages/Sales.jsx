@@ -203,7 +203,7 @@ export default function Sales() {
       cliente: selected[0].cliente,
       contacto: selected[0].contacto,
       tipoCliente: selected[0].tipoCliente,
-      fechaVenta: dayjs().format('YYYY-MM-DD'),
+      fechaVenta: dayjs(selected[0].fechaVencimiento).format('YYYY-MM-DD'),
       items: selected.map(s => ({
         plataformaId: s.plataformaId,
         perfil: s.perfil,
