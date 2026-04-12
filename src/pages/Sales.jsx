@@ -508,9 +508,17 @@ export default function Sales() {
 
       <PaginationControls />
 
+      {/* Accesorios Globales para Menús */}
+      {openActionMenuId && (
+        <div 
+          className="fixed inset-0 z-[140] bg-transparent" 
+          onClick={() => setOpenActionMenuId(null)}
+        ></div>
+      )}
+
       {/* DESKTOP TABLE VIEW */}
-      <div className="hidden lg:block bg-slate-900/40 rounded-[40px] border border-slate-800 overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.4)]">
-        <div className="overflow-x-auto">
+      <div className="hidden lg:block bg-slate-900/40 rounded-[40px] border border-slate-800 shadow-[0_20px_50px_rgba(0,0,0,0.4)]">
+        <div className="overflow-visible">
           <table className="w-full border-separate border-spacing-y-2">
             <thead>
               <tr className="bg-transparent">
@@ -543,7 +551,7 @@ export default function Sales() {
                 return (
                   <tr key={sale.id} className={`group ${selectedSales.includes(sale.id) ? 'bg-indigo-500/10 border-l-4 border-indigo-500' : 'bg-slate-900/60 hover:bg-slate-800 border-l-4 border-transparent hover:border-indigo-500/50'} transition-all duration-300 shadow-xl hover:shadow-indigo-500/10`}>
                     <td className="px-4 py-5 rounded-l-[20px]">
-                      {sale.estado !== 'Renovado' && !isExpired && (
+                      {sale.estado !== 'Renovado' && !isExpired && !!sale.comboId && (
                         <button onClick={() => {
                           setSelectedSales(prev => prev.includes(sale.id) ? prev.filter(id => id !== sale.id) : [...prev, sale.id]);
                         }} className={`p-2.5 rounded-xl border-2 transition-all ${selectedSales.includes(sale.id) ? 'bg-indigo-600 border-indigo-500 text-white shadow-[0_0_15px_rgba(79,70,229,0.4)]' : 'border-slate-800 text-slate-700 hover:border-slate-600'}`}>
@@ -598,33 +606,50 @@ export default function Sales() {
                     </td>
                     <td className="px-4 py-5 rounded-r-[20px]">
                        <div className="relative flex items-center justify-end">
-                         <button
-                           onClick={() => setOpenActionMenuId(openActionMenuId === sale.id ? null : sale.id)}
-                           className={`p-2.5 rounded-xl transition-all ${openActionMenuId === sale.id ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}
-                         >
-                           <MoreHorizontal size={18} />
-                         </button>
+                          <button
+                            onClick={() => setOpenActionMenuId(openActionMenuId === sale.id ? null : sale.id)}
+                            className={`p-2.5 rounded-xl transition-all ${openActionMenuId === sale.id ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}
+                          >
+                            <MoreHorizontal size={18} />
+                          </button>
 
-                         {openActionMenuId === sale.id && (
-                           <div className="absolute right-0 top-12 z-[50] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 min-w-[150px] animate-in fade-in zoom-in-95 duration-200">
-                             {sale.estado !== 'Renovado' && !isExpired && (
-                               <>
-                                 <button onClick={() => { handleWhatsAppReminder(sale); setOpenActionMenuId(null); }} className="w-full flex items-center gap-3 p-3 hover:bg-emerald-500/10 text-emerald-500 rounded-xl transition-all">
-                                   <MessageCircle size={16}/><span className="text-[10px] font-black uppercase tracking-widest">WhatsApp</span>
-                                 </button>
-                                 <button onClick={() => { handleOpenBulkRenovate([sale.id]); setOpenActionMenuId(null); }} className="w-full flex items-center gap-3 p-3 hover:bg-indigo-500/10 text-indigo-400 rounded-xl transition-all">
-                                   <RefreshCw size={16}/><span className="text-[10px] font-black uppercase tracking-widest">Renovar</span>
-                                 </button>
-                                 <button onClick={() => { handleOpenEditModal(sale); setOpenActionMenuId(null); }} className="w-full flex items-center gap-3 p-3 hover:bg-slate-800 text-slate-400 rounded-xl transition-all">
-                                   <Edit3 size={16}/><span className="text-[10px] font-black uppercase tracking-widest">Editar</span>
-                                 </button>
-                               </>
-                             )}
-                             <button onClick={() => { showConfirm('delete', sale); setOpenActionMenuId(null); }} className="w-full flex items-center gap-3 p-3 hover:bg-red-500/10 text-red-500 rounded-xl transition-all">
-                               <Trash2 size={16}/><span className="text-[10px] font-black uppercase tracking-widest">Eliminar</span>
-                             </button>
-                           </div>
-                         )}
+                          {openActionMenuId === sale.id && (
+                            <div className="absolute right-0 top-[calc(100%+8px)] z-[150] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 min-w-[170px] animate-in fade-in zoom-in-95 duration-200 backdrop-blur-xl">
+                              {sale.estado === 'Activo' && !isExpired ? (
+                                <>
+                                  <button onClick={() => { handleWhatsAppReminder(sale); setOpenActionMenuId(null); }} className="w-full flex items-center gap-3 p-3 hover:bg-emerald-500/10 text-emerald-500 rounded-xl transition-all">
+                                    <MessageCircle size={16}/><span className="text-[10px] font-black uppercase tracking-widest">WhatsApp</span>
+                                  </button>
+                                  
+                                  <button onClick={() => { handleOpenBulkRenovate([sale.id]); setOpenActionMenuId(null); }} className="w-full flex items-center gap-3 p-3 hover:bg-indigo-500/10 text-indigo-400 rounded-xl transition-all">
+                                    <RefreshCw size={16}/><span className="text-[10px] font-black uppercase tracking-widest">Renovar</span>
+                                  </button>
+
+                                  <button 
+                                    onClick={() => { 
+                                      handleOpenEditModal(sale);
+                                      setOpenActionMenuId(null); 
+                                    }} 
+                                    className="w-full flex items-center gap-3 p-3 hover:bg-slate-800 text-slate-400 rounded-xl transition-all"
+                                  >
+                                    <Edit3 size={16}/><span className="text-[10px] font-black uppercase tracking-widest">Editar</span>
+                                  </button>
+
+                                  <div className="my-1 border-t border-slate-800"></div>
+                                </>
+                              ) : null}
+
+                              <button 
+                                onClick={() => { 
+                                  showConfirm('delete', sale); 
+                                  setOpenActionMenuId(null); 
+                                }} 
+                                className="w-full flex items-center gap-3 p-3 hover:bg-red-500/10 text-red-500 rounded-xl transition-all"
+                              >
+                                <Trash2 size={16}/><span className="text-[10px] font-black uppercase tracking-widest">Eliminar</span>
+                              </button>
+                            </div>
+                          )}
                        </div>
                     </td>
                   </tr>
@@ -648,7 +673,7 @@ export default function Sales() {
             <div key={sale.id} className={`group relative bg-slate-900/40 p-4 rounded-2xl border border-slate-800/60 transition-all active:scale-[0.98] ${selectedSales.includes(sale.id) ? 'border-indigo-500/50 bg-indigo-500/5' : ''}`}>
               <div className="flex items-center gap-4">
                 {/* Selection Control - Mobile */}
-                {sale.estado !== 'Renovado' && !isExpired && (
+                {sale.estado !== 'Renovado' && !isExpired && !!sale.comboId && (
                   <div className="shrink-0 flex items-center justify-center">
                     <button 
                       onClick={() => {
@@ -708,8 +733,8 @@ export default function Sales() {
                     </button>
 
                     {openActionMenuId === sale.id && (
-                      <div className="absolute right-0 top-12 z-[50] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 min-w-[140px] animate-in fade-in zoom-in-95 duration-200">
-                        {sale.estado !== 'Renovado' && !isExpired && (
+                      <div className="absolute right-0 top-[calc(100%+8px)] z-[150] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 min-w-[160px] animate-in fade-in zoom-in-95 duration-200 backdrop-blur-xl">
+                        {sale.estado === 'Activo' && !isExpired ? (
                           <>
                             <button onClick={() => { handleWhatsAppReminder(sale); setOpenActionMenuId(null); }} className="w-full flex items-center gap-3 p-3 hover:bg-emerald-500/10 text-emerald-500 rounded-xl transition-all">
                               <MessageCircle size={16}/><span className="text-[10px] font-black uppercase tracking-widest">WhatsApp</span>
@@ -731,8 +756,10 @@ export default function Sales() {
                             >
                               <Edit3 size={16}/><span className="text-[10px] font-black uppercase tracking-widest">Editar</span>
                             </button>
+                            <div className="my-1 border-t border-slate-800"></div>
                           </>
-                        )}
+                        ) : null}
+                        
                         <button 
                           onClick={() => { showConfirm('delete', sale); setOpenActionMenuId(null); }}
                           className="w-full flex items-center gap-3 p-3 hover:bg-red-500/10 text-red-500 rounded-xl transition-all"
@@ -804,7 +831,7 @@ export default function Sales() {
                   <div className="w-8 h-1 bg-indigo-500 rounded-full"></div>
                   <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-[0.3em]">Información del Cliente</h4>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 relative z-[50]">
                   <div className="space-y-3">
                     <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Segmento</label>
                     <div className="relative">
@@ -838,7 +865,7 @@ export default function Sales() {
                         className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" 
                       />
                       {showDistSuggestions && distSuggestions.length > 0 && (
-                        <div className="absolute z-[110] left-0 right-0 top-[100%] mt-2 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2">
+                        <div className="absolute z-[500] left-0 right-0 top-[100%] mt-2 bg-slate-950 border border-slate-800 rounded-2xl shadow-3xl overflow-hidden animate-in fade-in slide-in-from-top-2 backdrop-blur-xl ring-1 ring-white/5">
                           {distSuggestions.map((d, i) => (
                             <button
                               key={i}
@@ -878,7 +905,7 @@ export default function Sales() {
                           className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" 
                         />
                         {showSuggestions && clientSuggestions.length > 0 && (
-                          <div className="absolute z-[110] left-0 right-0 top-[100%] mt-2 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2">
+                          <div className="absolute z-[500] left-0 right-0 top-[100%] mt-2 bg-slate-950 border border-slate-800 rounded-2xl shadow-3xl overflow-hidden animate-in fade-in slide-in-from-top-2 backdrop-blur-xl ring-1 ring-white/5">
                             {clientSuggestions.map((c, i) => (
                               <button
                                 key={i}
@@ -902,7 +929,7 @@ export default function Sales() {
                   )}
                 </div>
 
-                <div className={`flex flex-col sm:flex-row ${formData.tipoCliente === 'Final' ? 'sm:gap-8' : 'sm:gap-0'} items-start transition-all duration-500`}>
+                <div className={`flex flex-col sm:flex-row ${formData.tipoCliente === 'Final' ? 'sm:gap-8' : 'sm:gap-0'} items-start transition-all duration-500 relative z-[40]`}>
                   <div className={`transition-all duration-500 ease-out overflow-hidden ${formData.tipoCliente === 'Final' ? 'w-full sm:w-1/2 opacity-100 translate-x-0' : 'w-0 h-0 opacity-0 -translate-x-10 pointer-events-none'}`}>
                     <div className="space-y-3 min-w-[200px]">
                       <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">WhatsApp</label>
@@ -938,7 +965,7 @@ export default function Sales() {
               </div>
 
               {/* CANASTA DE PLATAFORMAS */}
-              <div className="space-y-6">
+              <div className="space-y-6 relative z-[30]">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-1 bg-emerald-500 rounded-full"></div>
@@ -955,7 +982,7 @@ export default function Sales() {
                   {formData.items.map((item, idx) => (
                     <div key={idx} className="group relative bg-slate-950/40 p-4 rounded-2xl border border-slate-800/50 hover:border-indigo-500/30 transition-all">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-3 relative">
+                        <div className="space-y-3 relative z-[10]">
                           <label className="text-[9px] font-black uppercase text-slate-600 ml-1">Plataforma</label>
                           <input 
                             required 
@@ -972,7 +999,7 @@ export default function Sales() {
                             className="w-full bg-slate-900 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" 
                           />
                           {activePlatIndex === idx && platSearchTerms[idx] && (
-                            <div className="absolute z-[120] left-0 right-0 top-[100%] mt-2 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
+                            <div className="absolute z-[500] left-0 right-0 top-[100%] mt-2 bg-slate-950 border border-slate-800 rounded-2xl shadow-3xl overflow-hidden backdrop-blur-xl ring-1 ring-white/5">
                               {platforms
                                 .filter(p => p.activa && p.tipo === formData.tipoCliente && p.nombre.toLowerCase().includes(platSearchTerms[idx].toLowerCase()))
                                 .map((p, i) => (
@@ -1000,7 +1027,7 @@ export default function Sales() {
                             </div>
                           )}
                         </div>
-                        <div className="space-y-3">
+                        <div className="space-y-3 relative z-[5]">
                           <label className="text-[9px] font-black uppercase text-slate-600 ml-1">Perfil/Acceso</label>
                           <div className="flex gap-3">
                             <input required placeholder="Ej: Perfil 1 / Pin 1234" value={item.perfil} onChange={e => updateItem(idx, 'perfil', e.target.value)} className="flex-1 bg-slate-900 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" />
