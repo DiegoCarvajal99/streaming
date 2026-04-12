@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { collection, getDocs, addDoc, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { 
@@ -19,6 +19,14 @@ dayjs.locale('es');
 const MESES_ABR = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
 const MESES_FULL = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
+const parseDate = (s) => {
+  if (!s) return dayjs();
+  if (s?.seconds) return dayjs(s.toDate());
+  return dayjs(s);
+};
+
+const parsePrice = (val) => Number(String(val).replace(/\./g, '')) || 0;
+
 export default function Dashboard() {
   const { userMetadata } = useAuth();
   const [allSales, setAllSales] = useState([]);
@@ -35,10 +43,12 @@ export default function Dashboard() {
   });
 
   const [todayExpiries, setTodayExpiries] = useState([]);
+  const [selectedExpiries, setSelectedExpiries] = useState([]);
 
   const [dailyStats, setDailyStats] = useState({
     ventas: 0,
     ganancia: 0,
+    costo: 0,
     comparativaVentas: 0
   });
 
@@ -52,7 +62,7 @@ export default function Dashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     cliente: '', contacto: '', tipoCliente: 'Final', fechaVenta: dayjs().format('YYYY-MM-DD'),
-    items: [{ plataformaId: '', perfil: '', prevId: null, oldExpiry: null }]
+    items: [{ id: Date.now(), plataformaId: '', perfil: '', prevId: null, oldExpiry: null }]
   });
 
   // Lógica de Tooltip con Retardo (1s) e Interacción Dinámica
@@ -122,7 +132,7 @@ export default function Dashboard() {
   };
 
   const [platformRanking, setPlatformRanking] = useState([]);
-  const fetchSales = async () => {
+  const fetchData = async () => {
     try {
       const [salesSnap, platformsSnap, dSnap] = await Promise.all([
         getDocs(collection(db, 'ventas')),
@@ -130,13 +140,40 @@ export default function Dashboard() {
         getDocs(collection(db, 'distribuidores'))
       ]);
       
-      const sales = salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const plats = platformsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const salesData = salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      setPlatforms(plats);
+      // Lógica de agrupamiento de Combos para el ordenado
+      const comboTimestamps = {};
+      salesData.forEach(s => {
+        if (s.comboId) {
+          const ts = dayjs(s.fechaCompra).valueOf();
+          if (!comboTimestamps[s.comboId] || ts > comboTimestamps[s.comboId]) {
+            comboTimestamps[s.comboId] = ts;
+          }
+        }
+      });
+
+      // Ordenar: Día (desc) -> Combo Group (desc) -> Individual (desc)
+      salesData.sort((a, b) => {
+        const timeA = a.comboId ? comboTimestamps[a.comboId] : dayjs(a.fechaCompra).valueOf();
+        const timeB = b.comboId ? comboTimestamps[b.comboId] : dayjs(b.fechaCompra).valueOf();
+        
+        if (timeB !== timeA) return timeB - timeA;
+        // Agrupar por CLIENTE y luego por comboId para asegurar que no se intercalen
+        if (a.cliente !== b.cliente) return a.cliente.localeCompare(b.cliente);
+        if (a.comboId !== b.comboId) {
+          const cA = a.comboId || '';
+          const cB = b.comboId || '';
+          return cB.localeCompare(cA);
+        }
+        return b.id.localeCompare(a.id);
+      });
+      
+      setAllSales(salesData);
+      setPlatforms(platformsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setDistribuidores(dSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(d => d.activo));
       
-      const adjustedYears = [...new Set(sales.map(s => {
+      const adjustedYears = [...new Set(salesData.map(s => {
         const d = parseDate(s.fechaVencimiento || s.fechaVenta).subtract(1, 'month');
         return d.isValid() ? d.year().toString() : dayjs().year().toString();
       }))];
@@ -145,16 +182,14 @@ export default function Dashboard() {
       const allYears = [...new Set([currentYear, ...adjustedYears])].sort((a, b) => b - a);
       setYearOptions(allYears);
       
-      setAllSales(sales);
-      
       const today = dayjs().format('YYYY-MM-DD');
-      const expiringToday = sales.filter(s => 
+      const expiringToday = salesData.filter(s => 
         s.estado === 'Activo' && 
         parseDate(s.fechaVencimiento).format('YYYY-MM-DD') === today
       );
       setTodayExpiries(expiringToday);
 
-      processData(sales, segmentFilter, monthFilter, yearFilter);
+      processData(salesData, segmentFilter, monthFilter, yearFilter);
     } catch (error) {
       console.error("Error fetching data:", error);
     } finally {
@@ -172,12 +207,24 @@ export default function Dashboard() {
   const addItem = () => {
     setFormData({
       ...formData,
-      items: [...formData.items, { plataformaId: '', perfil: '', prevId: null, oldExpiry: null }]
+      items: [...formData.items, { id: Date.now(), plataformaId: '', perfil: '', prevId: null, oldExpiry: null }]
     });
   };
 
-  const removeItem = (idx) => {
-    setFormData({ ...formData, items: formData.items.filter((_, i) => i !== idx) });
+  const removeItem = (id) => {
+    // Iniciar animación de salida
+    setFormData(prev => ({
+      ...prev,
+      items: prev.items.map(item => item.id === id ? { ...item, isExiting: true } : item)
+    }));
+
+    // Borrado físico después de la animación (300ms)
+    setTimeout(() => {
+      setFormData(prev => ({
+        ...prev,
+        items: prev.items.filter(item => item.id !== id)
+      }));
+    }, 300);
   };
 
   const calculateTotals = () => {
@@ -189,7 +236,6 @@ export default function Dashboard() {
     items.forEach(item => {
       const p = platforms.find(x => x.id === item.plataformaId);
       if (p) {
-        const parsePrice = (val) => Number(String(val).replace(/\./g, '')) || 0;
         sumVenta += parsePrice(p.precioVenta);
         sumCpra += parsePrice(p.precioCompra);
       }
@@ -209,17 +255,44 @@ export default function Dashboard() {
     return { sumVenta, discount, finalVenta, totalGanancia };
   };
 
+  const selectionStatus = useMemo(() => {
+    if (selectedExpiries.length === 0) return { isValid: true };
+    const selected = allSales.filter(s => selectedExpiries.includes(s.id));
+    
+    // 1. Verificar mismo cliente
+    const uniqueClients = [...new Set(selected.map(s => s.cliente))];
+    if (uniqueClients.length > 1) {
+      return { isValid: false, message: 'Diferentes Clientes', details: 'No puedes mezclar clientes distintos' };
+    }
+
+    // 2. No mezclar individuales con combos
+    const hasCombo = selected.some(s => !!s.comboId);
+    const hasNoCombo = selected.some(s => !s.comboId);
+    if (hasCombo && hasNoCombo) {
+      return { isValid: false, message: 'Individual + Combo', details: 'No mezclar individuales con combos' };
+    }
+
+    // 3. Mismo comboId
+    const comboIds = [...new Set(selected.map(s => s.comboId).filter(Boolean))];
+    if (comboIds.length > 1) {
+      return { isValid: false, message: 'Combos Distintos', details: 'Las cuentas deben ser del mismo combo' };
+    }
+
+    return { isValid: true };
+  }, [selectedExpiries, allSales]);
+
   const handleOpenBulkRenovate = (manualIds = null) => {
-    const targetIds = Array.isArray(manualIds) ? manualIds : [];
+    const targetIds = Array.isArray(manualIds) ? manualIds : selectedExpiries;
     const selected = allSales.filter(s => targetIds.includes(s.id));
     if (selected.length === 0) return;
-    
+
     setFormData({
       cliente: selected[0].cliente,
       contacto: selected[0].contacto,
       tipoCliente: selected[0].tipoCliente,
       fechaVenta: dayjs(selected[0].fechaVencimiento).format('YYYY-MM-DD'),
-      items: selected.map(s => ({
+      items: selected.map((s, i) => ({
+        id: Date.now() + i,
         plataformaId: s.plataformaId,
         perfil: s.perfil,
         prevId: s.id,
@@ -237,13 +310,18 @@ export default function Dashboard() {
       const count = formData.items.length;
       const discountPerItem = count > 0 ? Math.floor(discount / count) : 0;
       const comboId = `COMBO-${Date.now()}`;
-      const now = dayjs();
+      
+      const actualTime = dayjs();
+      const now = dayjs(formData.fechaVenta)
+        .hour(actualTime.hour())
+        .minute(actualTime.minute())
+        .second(actualTime.second())
+        .millisecond(actualTime.millisecond());
 
       const savePromises = formData.items.map(async (item) => {
         const platform = platforms.find(p => p.id === item.plataformaId);
         if (!platform) return;
 
-        const parsePrice = (val) => Number(String(val).replace(/\./g, '')) || 0;
         const vtaOriginal = parsePrice(platform.precioVenta);
         const cpraOriginal = parsePrice(platform.precioCompra);
         
@@ -294,7 +372,8 @@ export default function Dashboard() {
       }
 
       setIsModalOpen(false);
-      fetchSales();
+      setSelectedExpiries([]);
+      await fetchData();
     } catch (error) {
       console.error(error);
     } finally {
@@ -316,10 +395,7 @@ export default function Dashboard() {
      return key ? parsePrice(s[key]) : 0;
   };
 
-  const parseDate = (s) => {
-    if (s?.seconds) return dayjs(s.toDate());
-    return dayjs(s);
-  };
+
 
   const processData = (sales, segment, month, year) => {
     const monthlyDataMap = {};
@@ -423,16 +499,57 @@ export default function Dashboard() {
 
     const totalTodayVentas = todaySales.length;
     const totalTodayGanancia = todaySales.reduce((sum, s) => sum + getGanancia(s), 0);
+    
+    // Nuevo cálculo de costo: Agrupar por combo para aplicar descuentos de compra
+    const combos = {};
+    const standaloneSales = [];
+    
+    todaySales.forEach(s => {
+      if (s.comboId) {
+        if (!combos[s.comboId]) combos[s.comboId] = [];
+        combos[s.comboId].push(s);
+      } else {
+        standaloneSales.push(s);
+      }
+    });
+
+    let totalTodayCosto = 0;
+    
+    // Procesar ventas individuales
+    standaloneSales.forEach(s => {
+      const p = platforms.find(x => x.id === s.plataformaId);
+      totalTodayCosto += (p ? parsePrice(p.precioCompra) : 0);
+    });
+
+    // Procesar combos con lógica de descuento de socio
+    Object.values(combos).forEach(items => {
+      let groupCpra = 0;
+      items.forEach(s => {
+        const p = platforms.find(x => x.id === s.plataformaId);
+        groupCpra += (p ? parsePrice(p.precioCompra) : 0);
+      });
+      
+      let discount = 0;
+      const count = items.length;
+      if (count >= 2 && groupCpra >= 10000) {
+        if (count === 2) discount = 500;
+        else if (count === 3) discount = 1000;
+        else if (count >= 4) discount = 1500;
+      }
+      totalTodayCosto += (groupCpra - discount);
+    });
+
     const totalYesterdayVentas = yesterdaySales.length;
 
     setDailyStats({
       ventas: totalTodayVentas,
       ganancia: totalTodayGanancia,
+      costo: totalTodayCosto,
       comparativaVentas: totalTodayVentas - totalYesterdayVentas
     });
   };
 
-  useEffect(() => { fetchSales(); return () => { if (tooltipTimer.current) clearTimeout(tooltipTimer.current); }; }, []);
+  useEffect(() => { fetchData(); return () => { if (tooltipTimer.current) clearTimeout(tooltipTimer.current); }; }, []);
 
   useEffect(() => {
     if (allSales.length > 0) {
@@ -527,34 +644,38 @@ export default function Dashboard() {
           </div>
         </div>
 
-      <div className="bg-slate-900/40 border border-slate-800 p-6 sm:p-10 rounded-[40px] shadow-2xl group overflow-hidden relative">
-        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-8 sm:gap-12">
-           <div className="flex flex-col sm:flex-row items-center gap-6 sm:gap-10">
-              <div className="p-6 bg-indigo-600/10 rounded-[30px] border border-indigo-500/20 group-hover:scale-110 transition-transform duration-700">
-                 <Zap size={32} className="text-amber-400 fill-amber-400/20" />
+      <div className="bg-slate-900/40 border border-slate-800 p-8 sm:p-12 rounded-[50px] shadow-2xl relative overflow-hidden group">
+        <div className="flex flex-col gap-10 relative z-10">
+           {/* HEADER: TITULO Y SELECTOR DE FECHA */}
+           <div className="flex flex-col lg:flex-row items-center justify-between gap-8 pb-8 border-b border-slate-800/50">
+              <div className="flex items-center gap-6 sm:gap-8">
+                 <div className="p-5 bg-indigo-600/10 rounded-[28px] border border-indigo-500/20 group-hover:rotate-12 transition-all duration-700 shadow-[0_0_20px_rgba(99,102,241,0.1)]">
+                    <Zap size={32} className="text-amber-400 fill-amber-400/20" />
+                 </div>
+                 <div className="text-left space-y-1">
+                    <h3 className="text-3xl sm:text-4xl font-black text-white uppercase italic tracking-tighter leading-none">Resumen Diario</h3>
+                    <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] flex items-center gap-2">
+                       <Clock size={12} className="animate-pulse"/> Métricas en Tiempo Real
+                    </p>
+                 </div>
               </div>
-              <div className="text-center sm:text-left">
-                 <h3 className="text-3xl font-black text-white uppercase italic tracking-tighter leading-none">Resumen Diario</h3>
-                 <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest flex items-center gap-2 justify-center sm:justify-start mt-2">
-                    <Clock size={12}/> Métricas en Tiempo Real
-                 </p>
-              </div>
-              
+
               <div className="relative group cursor-pointer" onClick={(e) => {
                 const input = e.currentTarget.querySelector('input');
                 if (input && input.showPicker) input.showPicker();
               }}>
-                <div className="absolute inset-0 bg-slate-900/40 group-hover:bg-indigo-500/10 rounded-2xl transition-all border border-slate-800 group-hover:border-indigo-500/50"></div>
-                <div className="relative flex items-center px-4 py-3 gap-4 bg-slate-800/20 rounded-2xl">
+                <div className="absolute inset-0 bg-slate-900/60 group-hover:bg-indigo-500/10 rounded-[22px] transition-all border border-slate-700/50 group-hover:border-indigo-500/50 backdrop-blur-md"></div>
+                <div className="relative flex items-center px-6 py-4 gap-6">
                   <div className="flex flex-col items-center">
-                    <span className="text-xl font-black text-indigo-400 leading-none">{dayjs(selectedDay).format('DD')}</span>
-                    <span className="text-[7px] font-black text-slate-500 uppercase tracking-tighter">{dayjs(selectedDay).format('MMM')}</span>
+                    <span className="text-2xl font-black text-indigo-400 leading-none">{dayjs(selectedDay).format('DD')}</span>
+                    <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">{dayjs(selectedDay).format('MMM')}</span>
                   </div>
-                  <div className="w-[1px] h-6 bg-slate-800"></div>
-                  <div className="flex-1 min-w-[100px]">
-                    <h4 className="text-[9px] font-black text-white uppercase tracking-widest leading-none">{dayjs(selectedDay).format('dddd')}</h4>
+                  <div className="w-[1px] h-10 bg-slate-800"></div>
+                  <div className="flex flex-col justify-center min-w-[120px]">
+                    <h4 className="text-xs font-black text-white uppercase tracking-widest leading-none">{dayjs(selectedDay).format('dddd')}</h4>
+                    <p className="text-[9px] font-bold text-slate-600 uppercase mt-1">Seleccionar Día</p>
                   </div>
-                  <Calendar className="text-slate-500 group-hover:text-indigo-400 transition-colors" size={16} />
+                  <Calendar className="text-slate-500 group-hover:text-indigo-400 transition-colors" size={20} />
                 </div>
                 <input 
                   type="date" 
@@ -565,31 +686,51 @@ export default function Dashboard() {
               </div>
            </div>
 
-           <div className="flex flex-col sm:flex-row items-center gap-8 lg:gap-12">
-              <div className="flex flex-col items-center sm:items-end">
-                 <span className="text-slate-500 text-[9px] font-black uppercase tracking-widest mb-1">Ventas Hoy</span>
-                 <div className="flex items-center gap-3">
-                    <h4 className="text-5xl font-black text-white tracking-tighter leading-none">{dailyStats.ventas}</h4>
-                    <div className={`p-1.5 rounded-lg flex items-center justify-center ${dailyStats.comparativaVentas >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                       {dailyStats.comparativaVentas >= 0 ? <ArrowUpRight size={16}/> : <ArrowDownRight size={16}/>}
-                       <span className="text-[10px] font-black ml-1">{Math.abs(dailyStats.comparativaVentas)}</span>
+           {/* MÉTRICAS GRID: BALANCED 3-COLUMN LAYOUT */}
+           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+              <div className="relative group/card bg-slate-950/20 p-8 rounded-[35px] border border-slate-800/50 hover:bg-slate-950/40 transition-all duration-500 flex flex-col items-center sm:items-start">
+                 <div className="absolute top-4 right-6 text-slate-800 group-hover/card:text-indigo-400/20 transition-colors">
+                    <Activity size={40} strokeWidth={1} />
+                 </div>
+                 <span className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-4">Ventas del Día</span>
+                 <div className="flex items-end gap-4">
+                    <h4 className="text-6xl font-black text-white tracking-tighter leading-none">{dailyStats.ventas}</h4>
+                    <div className={`mb-1 p-2 rounded-xl flex items-center justify-center ${dailyStats.comparativaVentas >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'} border border-emerald-500/20 shadow-[0_4px_15px_rgba(16,185,129,0.1)]`}>
+                       {dailyStats.comparativaVentas >= 0 ? <ArrowUpRight size={18}/> : <ArrowDownRight size={18}/>}
+                       <span className="text-xs font-black ml-1">{Math.abs(dailyStats.comparativaVentas)}</span>
                     </div>
                  </div>
               </div>
 
-              <div className="w-[1px] h-12 bg-slate-800 hidden sm:block"></div>
+               <div className="relative group/card bg-rose-500/5 border border-rose-500/10 p-8 rounded-[35px] hover:bg-rose-500/10 hover:border-rose-500/30 transition-all duration-500 flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-6">
+                     <span className="text-[10px] font-black uppercase text-rose-400/80 tracking-[0.2em]">Costo de Compra</span>
+                     <div className="w-10 h-10 rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-400">
+                        <DollarSign size={20} />
+                     </div>
+                  </div>
+                  <div className="space-y-1">
+                     <h4 className="text-3xl font-black text-rose-400 tracking-tighter leading-none">
+                       ${dailyStats.costo.toLocaleString()}
+                     </h4>
+                     <p className="text-[9px] font-black text-rose-500/40 uppercase tracking-widest">Inversión Proveedor</p>
+                  </div>
+               </div>
 
-              <div className="w-full sm:w-auto bg-indigo-600/10 border border-indigo-500/20 p-5 pr-8 rounded-[30px] flex items-center gap-6 hover:bg-indigo-600/20 transition-all cursor-default">
-                 <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 shadow-inner">
-                    <TrendingUp size={24} />
-                 </div>
-                 <div className="flex flex-col">
-                    <span className="text-[9px] font-black uppercase text-indigo-400 tracking-[0.2em] mb-1">Ganancia Hoy</span>
-                    <h4 className="text-3xl font-black text-emerald-400 tracking-tighter leading-none">
-                      ${dailyStats.ganancia.toLocaleString()}
-                    </h4>
-                 </div>
-              </div>
+               <div className="relative group/card bg-emerald-600/5 border border-emerald-500/10 p-8 rounded-[35px] hover:bg-emerald-600/10 hover:border-emerald-500/30 transition-all duration-500 flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-6">
+                     <span className="text-[10px] font-black uppercase text-emerald-400/80 tracking-[0.2em]">Ganancia Neta</span>
+                     <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+                        <TrendingUp size={20} />
+                     </div>
+                  </div>
+                  <div className="space-y-1">
+                     <h4 className="text-3xl font-black text-emerald-400 tracking-tighter leading-none">
+                       ${dailyStats.ganancia.toLocaleString()}
+                     </h4>
+                     <p className="text-[9px] font-black text-emerald-500/40 uppercase tracking-widest">Utilidad Diaria</p>
+                  </div>
+               </div>
            </div>
         </div>
       </div>
@@ -621,11 +762,21 @@ export default function Dashboard() {
                    </thead>
                    <tbody className="divide-y divide-slate-800/50">
                       {todayExpiries.map((sale, idx) => (
-                        <tr key={idx} className="group hover:bg-slate-800/20 transition-all duration-300">
+                        <tr key={idx} className={`group hover:bg-slate-800/20 transition-all duration-300 ${selectedExpiries.includes(sale.id) ? 'bg-indigo-500/10' : ''}`}>
                           <td className="px-8 py-5">
-                             <div className="flex flex-col gap-1">
-                                <span className="text-[11px] font-black text-white uppercase">{sale.cliente}</span>
-                                <span className="text-[8px] font-bold text-slate-500 uppercase">{sale.contacto}</span>
+                             <div className="flex items-center gap-4">
+                               {!!sale.comboId && (
+                                 <button 
+                                   onClick={() => setSelectedExpiries(prev => prev.includes(sale.id) ? prev.filter(id => id !== sale.id) : [...prev, sale.id])}
+                                   className={`p-2.5 rounded-xl border-2 transition-all ${selectedExpiries.includes(sale.id) ? 'bg-indigo-600 border-indigo-500 text-white shadow-[0_0_15px_rgba(79,70,229,0.4)]' : 'border-slate-800 text-slate-700 hover:border-slate-600'}`}
+                                 >
+                                   <CheckCircle2 size={14} strokeWidth={3} />
+                                 </button>
+                               )}
+                               <div className="flex flex-col gap-1">
+                                  <span className="text-[11px] font-black text-white uppercase">{sale.cliente}</span>
+                                  <span className="text-[8px] font-bold text-slate-500 uppercase">{sale.contacto}</span>
+                               </div>
                              </div>
                           </td>
                           <td className="px-8 py-5">
@@ -637,7 +788,7 @@ export default function Dashboard() {
                              </div>
                           </td>
                           <td className="px-8 py-5 text-center">
-                             <span className="px-3 py-1 bg-slate-950/50 border border-slate-800 rounded-lg text-[10px] font-mono text-slate-400">{sale.perfil || 'N/A'}</span>
+                             <span className="px-3 py-1 bg-slate-950/50 border border-slate-800 rounded-lg text-[10px] font-mono text-slate-400 uppercase">{(sale.perfil || 'N/A').toUpperCase()}</span>
                           </td>
                           <td className="px-8 py-5">
                              <div className="flex items-center justify-end gap-3">
@@ -654,8 +805,18 @@ export default function Dashboard() {
               {/* VISTA MÓVIL (CARDS) */}
               <div className="sm:hidden space-y-3">
                 {todayExpiries.map((sale, idx) => (
-                  <div key={idx} className="bg-slate-900/40 border border-slate-800 p-5 rounded-3xl flex items-center justify-between gap-4">
+                  <div key={idx} className={`relative bg-slate-900/40 border p-5 rounded-3xl flex items-center justify-between gap-4 transition-all ${selectedExpiries.includes(sale.id) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}>
                     <div className="flex items-center gap-4 flex-1 min-w-0">
+                      {!!sale.comboId && (
+                        <div className="shrink-0 flex items-center justify-center">
+                          <button 
+                            onClick={() => setSelectedExpiries(prev => prev.includes(sale.id) ? prev.filter(id => id !== sale.id) : [...prev, sale.id])}
+                            className={`p-2 rounded-lg border-2 transition-all ${selectedExpiries.includes(sale.id) ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' : 'border-slate-800 text-slate-800'}`}
+                          >
+                            <CheckCircle2 size={12} />
+                          </button>
+                        </div>
+                      )}
                       <div className="w-10 h-10 rounded-2xl bg-slate-800 p-1.5 flex items-center justify-center border border-slate-700 flex-shrink-0">
                         <img src={sale.plataformaImagenUrl} className="w-full h-full object-contain" alt="" />
                       </div>
@@ -663,7 +824,7 @@ export default function Dashboard() {
                         <span className="text-[11px] font-black text-white uppercase truncate">{sale.cliente}</span>
                         <div className="flex items-center gap-2">
                           <span className="text-[8px] font-bold text-indigo-400 uppercase tracking-widest">{sale.plataformaNombre}</span>
-                          <span className="px-1.5 py-0.5 bg-slate-950/50 rounded-md text-[7px] font-mono text-slate-500">{sale.perfil || 'N/A'}</span>
+                          <span className="px-1.5 py-0.5 bg-slate-950/50 rounded-md text-[7px] font-mono text-slate-500 uppercase">{(sale.perfil || 'N/A').toUpperCase()}</span>
                         </div>
                       </div>
                     </div>
@@ -674,6 +835,34 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+              {/* BARRA DE RENOVAR COMBO */}
+              {selectedExpiries.length > 0 && (
+                <div className="flex items-center justify-between bg-slate-900/80 backdrop-blur-xl border border-indigo-500/30 p-5 rounded-[30px] animate-in fade-in slide-in-from-top-2 shadow-2xl">
+                  <div className="flex flex-col shrink-0">
+                    <span className={`text-[11px] font-black uppercase tracking-[0.2em] transition-colors ml-2 ${selectionStatus.isValid ? 'text-indigo-400' : 'text-amber-500'}`}>
+                      {selectedExpiries.length} {selectionStatus.isValid ? 'Seleccionados' : 'Incompatibles'}
+                    </span>
+                    <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest ml-2">{selectionStatus.isValid ? 'Combo en preparación' : selectionStatus.message}</span>
+                  </div>
+                  <div className="flex gap-4">
+                    {selectionStatus.isValid ? (
+                      <button 
+                        onClick={() => { handleOpenBulkRenovate(selectedExpiries); setSelectedExpiries([]); }}
+                        className="flex items-center gap-3 px-8 py-4 bg-indigo-600 text-white text-[10px] font-black uppercase rounded-2xl hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95 whitespace-nowrap"
+                      >
+                        <RefreshCw size={16} /> Renovar Combo
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-3 px-6 py-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-[9px] font-black text-amber-500 uppercase tracking-widest italic animate-pulse">
+                        <ShoppingCart size={14} className="opacity-60" /> {selectionStatus.details}
+                      </div>
+                    )}
+                    <button onClick={() => setSelectedExpiries([])} className="px-8 py-4 bg-slate-800 text-slate-400 text-[10px] font-black uppercase rounded-2xl hover:bg-slate-700 transition-all active:scale-95">
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="bg-slate-900/20 border border-slate-800/50 rounded-[40px] p-8 sm:p-12 text-center border-dashed">
@@ -739,24 +928,19 @@ export default function Dashboard() {
       </div>
 
       {/* STATS BENTO GRID */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-8">
-        <div className="relative group bg-slate-900/60 border border-slate-800 p-8 rounded-[45px] overflow-hidden hover:border-emerald-500/30 transition-all duration-500 shadow-2xl">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="relative group bg-slate-900/60 border border-slate-800 p-8 rounded-[45px] overflow-hidden hover:border-emerald-500/30 transition-all duration-500 shadow-2xl col-span-2 lg:col-span-1">
           <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 blur-[50px] -translate-y-1/2 translate-x-1/2"></div>
           <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.2em] mb-1">Utilidad General</p>
           <h4 className="text-4xl font-black text-white tracking-tighter">${stats.totalGanancia.toLocaleString()}</h4>
         </div>
 
-        <div className="bg-slate-900/60 border border-slate-800 p-8 rounded-[45px] hover:border-indigo-500/30 transition-all duration-500 shadow-2xl">
-          <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.2em] mb-1">Volumen Global</p>
-          <h4 className="text-4xl font-black text-white tracking-tighter">{stats.totalVentas} <span className="text-sm font-bold text-slate-700">uds</span></h4>
-        </div>
-
-        <div className="bg-slate-900/60 border border-slate-800 p-8 rounded-[45px] hover:border-purple-500/30 transition-all duration-500 shadow-2xl">
+        <div className="bg-slate-900/60 border border-slate-800 p-8 rounded-[45px] hover:border-purple-500/30 transition-all duration-500 shadow-2xl col-span-1">
           <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.2em] mb-1">Cuentas Clientes</p>
           <h4 className="text-4xl font-black text-white tracking-tighter">{stats.ventasFinal}</h4>
         </div>
 
-        <div className="bg-slate-900/60 border border-slate-800 p-8 rounded-[45px] hover:border-blue-500/30 transition-all duration-500 shadow-2xl">
+        <div className="bg-slate-900/60 border border-slate-800 p-8 rounded-[45px] hover:border-blue-500/30 transition-all duration-500 shadow-2xl col-span-1">
           <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.2em] mb-1">Cuentas Distrib.</p>
           <h4 className="text-4xl font-black text-white tracking-tighter">{stats.ventasDistribuidor}</h4>
         </div>
@@ -898,14 +1082,11 @@ export default function Dashboard() {
                       <h4 className="text-xs font-black text-white uppercase italic tracking-tighter">Canasta de Plataformas</h4>
                     </div>
                   </div>
-                  <button type="button" onClick={addItem} className="px-4 py-2 bg-indigo-600/10 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-xl transition-all font-black text-[9px] uppercase tracking-widest border border-indigo-500/20 flex items-center gap-2">
-                    <PlusCircle size={14} /> Añadir Cuenta
-                  </button>
                 </div>
 
                 <div className="space-y-4">
                   {formData.items.map((item, idx) => (
-                    <div key={idx} className="group relative bg-slate-950/40 p-6 rounded-3xl border border-slate-800/50 hover:border-indigo-500/30 transition-all">
+                    <div key={item.id || idx} className={`group relative bg-slate-950/40 p-6 rounded-3xl border border-slate-800/50 hover:border-indigo-500/30 transition-all ${item.isExiting ? 'animate-scale-out pointer-events-none' : 'animate-fade-in-up'}`}>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                         <div className="space-y-3">
                           <label className="text-[9px] font-black uppercase text-slate-600 ml-1">Plataforma</label>
@@ -924,7 +1105,7 @@ export default function Dashboard() {
                           <div className="flex gap-3">
                             <input required placeholder="Ej: Perfil 1 / Pin 1234" value={item.perfil} onChange={e => updateItem(idx, 'perfil', e.target.value)} className="flex-1 bg-slate-900 border border-slate-700/50 rounded-2xl px-5 py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" />
                             {formData.items.length > 1 && (
-                              <button type="button" onClick={() => removeItem(idx)} className="p-4 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-2xl transition-all"><Trash2 size={16}/></button>
+                              <button type="button" onClick={() => removeItem(item.id)} className="p-4 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-2xl transition-all"><Trash2 size={16}/></button>
                             )}
                           </div>
                           {item.prevId && item.oldExpiry && (
@@ -939,6 +1120,9 @@ export default function Dashboard() {
                       </div>
                     </div>
                   ))}
+                  <button type="button" onClick={addItem} className="w-max mx-auto px-10 py-3 bg-indigo-600/10 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-2xl transition-all font-black text-[9px] uppercase tracking-widest border border-dashed border-indigo-500/30 hover:border-indigo-500 flex items-center justify-center gap-2">
+                    <PlusCircle size={14} /> Añadir Cuenta
+                  </button>
                 </div>
               </div>
 

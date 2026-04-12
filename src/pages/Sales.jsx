@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { 
   PlusCircle, Search, Calendar, Filter, X, 
   Trash2, Edit3, RefreshCw, AlertCircle, Clock, ChevronDown, CheckCircle2,
   MessageCircle, ExternalLink, User, Phone, Copy, MoreHorizontal,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, ShoppingCart
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import 'dayjs/locale/es';
@@ -35,10 +35,53 @@ export default function Sales() {
   const [clientSuggestions, setClientSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [openActionMenuId, setOpenActionMenuId] = useState(null);
+  const [menuDirection, setMenuDirection] = useState('down'); // 'up' o 'down'
+  
+  const toggleActionMenu = (e, saleId) => {
+    if (openActionMenuId === saleId) {
+      setOpenActionMenuId(null);
+      return;
+    }
+    
+    // Calcular si hay espacio abajo
+    const rect = e.currentTarget.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const menuEstimatedHeight = 240; // Altura aproximada del menú con sus botones
+    
+    setMenuDirection(spaceBelow < menuEstimatedHeight ? 'up' : 'down');
+    setOpenActionMenuId(saleId);
+  };
   
   // Autocomplete Socios
   const [distSuggestions, setDistSuggestions] = useState([]);
   const [showDistSuggestions, setShowDistSuggestions] = useState(false);
+
+  // Validación en tiempo real para selección de combos
+  const selectionStatus = useMemo(() => {
+    if (selectedSales.length === 0) return { isValid: true };
+    const selected = sales.filter(s => selectedSales.includes(s.id));
+    
+    // 1. Verificar mismo cliente
+    const uniqueClients = [...new Set(selected.map(s => s.cliente))];
+    if (uniqueClients.length > 1) {
+      return { isValid: false, message: 'Diferentes Clientes', details: 'No puedes mezclar clientes distintos' };
+    }
+
+    // 2. No mezclar individuales con combos
+    const hasCombo = selected.some(s => !!s.comboId);
+    const hasNoCombo = selected.some(s => !s.comboId);
+    if (hasCombo && hasNoCombo) {
+      return { isValid: false, message: 'Individual + Combo', details: 'No mezclar individuales con combos' };
+    }
+
+    // 3. Mismo comboId
+    const comboIds = [...new Set(selected.map(s => s.comboId).filter(Boolean))];
+    if (comboIds.length > 1) {
+      return { isValid: false, message: 'Combos Distintos', details: 'Las cuentas deben ser del mismo combo' };
+    }
+
+    return { isValid: true };
+  }, [selectedSales, sales]);
 
   // Autocomplete Plataformas
   const [platSearchTerms, setPlatSearchTerms] = useState(['']); // Una por cada item
@@ -47,7 +90,7 @@ export default function Sales() {
   const [formData, setFormData] = useState({
     cliente: '', 
     contacto: '', 
-    items: [{ plataformaId: '', perfil: '', prevId: null, oldExpiry: null }], 
+    items: [{ id: Date.now(), plataformaId: '', perfil: '', prevId: null, oldExpiry: null }], 
     tipoCliente: '', 
     fechaVenta: dayjs().format('YYYY-MM-DD')
   });
@@ -61,19 +104,36 @@ export default function Sales() {
   });
 
   const addItem = () => {
-    setFormData(prev => ({ ...prev, items: [...prev.items, { plataformaId: '', perfil: '', prevId: null, oldExpiry: null }] }));
+    setFormData(prev => ({ 
+      ...prev, 
+      items: [...prev.items, { id: Date.now(), plataformaId: '', perfil: '', prevId: null, oldExpiry: null }] 
+    }));
     setPlatSearchTerms(prev => [...prev, '']);
   };
 
-  const removeItem = (index) => {
-    if (formData.items.length <= 1) return;
-    const newItems = [...formData.items];
-    newItems.splice(index, 1);
-    setFormData(prev => ({ ...prev, items: newItems }));
-    
-    const newTerms = [...platSearchTerms];
-    newTerms.splice(index, 1);
-    setPlatSearchTerms(newTerms);
+  const removeItem = (id) => {
+    // Iniciar animación de salida
+    setFormData(prev => ({
+      ...prev,
+      items: prev.items.map(item => item.id === id ? { ...item, isExiting: true } : item)
+    }));
+
+    // Borrado físico después de la animación (300ms)
+    setTimeout(() => {
+      setFormData(prev => {
+        const itemIndex = prev.items.findIndex(item => item.id === id);
+        if (itemIndex === -1) return prev;
+
+        const filteredItems = prev.items.filter(item => item.id !== id);
+        
+        // Sincronizar términos de búsqueda
+        const newTerms = [...platSearchTerms];
+        newTerms.splice(itemIndex, 1);
+        setPlatSearchTerms(newTerms);
+        
+        return { ...prev, items: filteredItems };
+      });
+    }, 300);
   };
 
   const updateItem = (index, key, val) => {
@@ -130,9 +190,36 @@ export default function Sales() {
       const pSnap = await getDocs(collection(db, 'plataformas'));
       
       const salesData = sSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Ordenar por fechaCompra descendente (más recientes arriba)
-      salesData.sort((a, b) => dayjs(b.fechaCompra).diff(dayjs(a.fechaCompra)));
       
+      // Lógica de agrupamiento de Combos para el ordenado
+      const comboTimestamps = {};
+      salesData.forEach(s => {
+        if (s.comboId) {
+          const ts = dayjs(s.fechaCompra).valueOf();
+          if (!comboTimestamps[s.comboId] || ts > comboTimestamps[s.comboId]) {
+            comboTimestamps[s.comboId] = ts;
+          }
+        }
+      });
+
+      // Ordenar: Día (desc) -> Combo Group (desc) -> Individual (desc)
+      salesData.sort((a, b) => {
+        const timeA = a.comboId ? comboTimestamps[a.comboId] : dayjs(a.fechaCompra).valueOf();
+        const timeB = b.comboId ? comboTimestamps[b.comboId] : dayjs(b.fechaCompra).valueOf();
+        
+        if (timeB !== timeA) return timeB - timeA;
+        
+        // Agrupar por CLIENTE y luego por comboId para asegurar que no se intercalen
+        if (a.cliente !== b.cliente) return a.cliente.localeCompare(b.cliente);
+        
+        if (a.comboId !== b.comboId) {
+          const cA = a.comboId || '';
+          const cB = b.comboId || '';
+          return cB.localeCompare(cA);
+        }
+        
+        return b.id.localeCompare(a.id);
+      });
       
       setSales(salesData);
       setPlatforms(pSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -183,12 +270,12 @@ export default function Sales() {
   };
 
   const handleOpenModal = () => {
-    setFormData({ 
+    setFormData({
       cliente: '', 
       contacto: '', 
-      items: [{ plataformaId: '', perfil: '', prevId: null, oldExpiry: null }], 
-      tipoCliente: '', 
-      fechaVenta: dayjs().format('YYYY-MM-DD') 
+      items: [{ id: Date.now(), plataformaId: '', perfil: '', prevId: null, oldExpiry: null }], 
+      tipoCliente: 'Final', 
+      fechaVenta: dayjs().format('YYYY-MM-DD')
     });
     setPlatSearchTerms(['']);
     setIsModalOpen(true);
@@ -198,13 +285,14 @@ export default function Sales() {
     const targetIds = Array.isArray(manualIds) ? manualIds : selectedSales;
     const selected = sales.filter(s => targetIds.includes(s.id));
     if (selected.length === 0) return;
-    
+
     setFormData({
       cliente: selected[0].cliente,
       contacto: selected[0].contacto,
       tipoCliente: selected[0].tipoCliente,
       fechaVenta: dayjs(selected[0].fechaVencimiento).format('YYYY-MM-DD'),
-      items: selected.map(s => ({
+      items: selected.map((s, i) => ({
+        id: Date.now() + i,
         plataformaId: s.plataformaId,
         perfil: s.perfil,
         prevId: s.id,
@@ -433,26 +521,33 @@ export default function Sales() {
   const PaginationControls = () => {
     if (totalPages <= 1) return null;
     return (
-      <div className="flex items-center justify-between bg-slate-900/40 backdrop-blur-md p-4 rounded-3xl border border-slate-800/80 my-4 shadow-xl">
+      <div className="flex items-center justify-between gap-2 sm:gap-4 bg-slate-900/40 backdrop-blur-md p-3 sm:p-4 rounded-[28px] border border-slate-800/80 my-4 shadow-xl">
         <button 
           onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
           disabled={currentPage === 1}
-          className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800 text-slate-300 font-black rounded-2xl transition-all active:scale-95 uppercase text-[9px] tracking-widest"
+          className="flex items-center justify-center gap-2 px-4 sm:px-6 py-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800 text-slate-300 font-black rounded-2xl transition-all active:scale-95 uppercase text-[9px] tracking-widest min-w-[45px] sm:min-w-[120px]"
         >
-          <ChevronLeft size={16} strokeWidth={3} /> Anterior
+          <ChevronLeft size={16} strokeWidth={3} />
+          <span className="hidden sm:inline">Anterior</span>
         </button>
         
-        <div className="flex flex-col items-center">
-          <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.3em]">Página {currentPage} de {totalPages}</span>
-          <span className="text-[7px] font-bold text-slate-600 uppercase tracking-widest mt-0.5">{filteredSales.length} registros encontrados</span>
+        <div className="flex flex-col items-center px-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] sm:text-[11px] font-black text-indigo-400 uppercase tracking-[0.2em]">
+               <span className="sm:hidden">{currentPage} / {totalPages}</span>
+               <span className="hidden sm:inline">Página {currentPage} de {totalPages}</span>
+            </span>
+          </div>
+          <span className="text-[7px] font-bold text-slate-600 uppercase tracking-widest mt-0.5 whitespace-nowrap">{filteredSales.length} registros</span>
         </div>
 
         <button 
           onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
           disabled={currentPage === totalPages}
-          className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:hover:bg-indigo-600 text-white font-black rounded-2xl transition-all shadow-lg shadow-indigo-600/10 active:scale-95 uppercase text-[9px] tracking-widest"
+          className="flex items-center justify-center gap-2 px-4 sm:px-6 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:hover:bg-indigo-600 text-white font-black rounded-2xl transition-all shadow-lg shadow-indigo-600/10 active:scale-95 uppercase text-[9px] tracking-widest min-w-[45px] sm:min-w-[120px]"
         >
-          Siguiente <ChevronRight size={16} strokeWidth={3} />
+          <span className="hidden sm:inline">Siguiente</span>
+          <ChevronRight size={16} strokeWidth={3} />
         </button>
       </div>
     );
@@ -566,7 +661,7 @@ export default function Sales() {
                 const isToday = today === expiryDate;
 
                 return (
-                  <tr key={sale.id} className={`group ${selectedSales.includes(sale.id) ? 'bg-indigo-500/10 border-l-4 border-indigo-500' : 'bg-slate-900/60 hover:bg-slate-800 border-l-4 border-transparent hover:border-indigo-500/50'} transition-all duration-300 shadow-xl hover:shadow-indigo-500/10`}>
+                  <tr key={sale.id} className={`group relative transition-all duration-300 shadow-xl hover:shadow-indigo-500/10 ${selectedSales.includes(sale.id) ? 'bg-indigo-500/10 border-l-4 border-indigo-500' : 'bg-slate-900/60 hover:bg-slate-800 border-l-4 border-transparent hover:border-indigo-500/50'} ${openActionMenuId === sale.id ? 'z-[160] shadow-2xl ring-1 ring-indigo-500/20' : ''}`}>
                     <td className="px-4 py-5 rounded-l-[20px]">
                       {sale.estado !== 'Renovado' && !isExpired && !!sale.comboId && (
                         <button onClick={() => {
@@ -593,7 +688,7 @@ export default function Sales() {
                       </div>
                     </td>
                     <td className="px-4 py-5">
-                      <span className="font-black text-sm text-slate-300 uppercase tracking-tighter">{sale.perfil || 'N/A'}</span>
+                      <span className="font-black text-sm text-slate-300 uppercase tracking-tighter">{(sale.perfil || 'N/A').toUpperCase()}</span>
                     </td>
                     <td className="px-4 py-5">
                       <span className="text-[11px] font-black text-slate-300 uppercase tracking-tighter whitespace-nowrap">{dayjs(sale.fechaCompra).format('DD MMM YYYY')}</span>
@@ -622,16 +717,16 @@ export default function Sales() {
                       </span>
                     </td>
                     <td className="px-4 py-5 rounded-r-[20px]">
-                       <div className="relative flex items-center justify-end">
+                       <div className="relative flex items-center justify-end transition-all">
                           <button
-                            onClick={() => setOpenActionMenuId(openActionMenuId === sale.id ? null : sale.id)}
+                            onClick={(e) => toggleActionMenu(e, sale.id)}
                             className={`p-2.5 rounded-xl transition-all ${openActionMenuId === sale.id ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}
                           >
                             <MoreHorizontal size={18} />
                           </button>
 
                           {openActionMenuId === sale.id && (
-                            <div className="absolute right-0 top-[calc(100%+8px)] z-[150] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 min-w-[170px] animate-in fade-in zoom-in-95 duration-200 backdrop-blur-xl">
+                            <div className={`absolute right-0 z-[150] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 min-w-[170px] animate-in fade-in zoom-in-95 duration-200 backdrop-blur-xl ${menuDirection === 'down' ? 'top-[calc(100%+8px)]' : 'bottom-[calc(100%+8px)] origin-bottom'}`}>
                               {sale.estado === 'Activo' && !isExpired ? (
                                 <>
                                   <button onClick={() => { handleWhatsAppReminder(sale); setOpenActionMenuId(null); }} className="w-full flex items-center gap-3 p-3 hover:bg-emerald-500/10 text-emerald-500 rounded-xl transition-all">
@@ -687,7 +782,7 @@ export default function Sales() {
           const isToday = today === expiryDate;
 
           return (
-            <div key={sale.id} className={`group relative bg-slate-900/40 p-4 rounded-2xl border border-slate-800/60 transition-all active:scale-[0.98] ${selectedSales.includes(sale.id) ? 'border-indigo-500/50 bg-indigo-500/5' : ''}`}>
+            <div key={sale.id} className={`group relative bg-slate-900/40 p-4 rounded-2xl border border-slate-800/60 shadow-xl transition-all duration-300 ${openActionMenuId === sale.id ? 'z-[160] shadow-2xl ring-1 ring-indigo-500/30' : ''} ${selectedSales.includes(sale.id) ? 'border-indigo-500/50 bg-indigo-500/5' : ''}`}>
               <div className="flex items-center gap-4">
                 {/* Selection Control - Mobile */}
                 {sale.estado !== 'Renovado' && !isExpired && !!sale.comboId && (
@@ -726,11 +821,11 @@ export default function Sales() {
                       {sale.estado === 'Renovado' ? 'RENOVADO' : isExpired ? 'VENCIDO' : isToday ? 'HOY' : 'ACTIVO'}
                     </span>
                   </div>
-                  <p className="text-[9px] font-bold text-slate-500 truncate mt-1">PERFIL: <span className="text-slate-300">{sale.perfil || 'S/N'}</span></p>
+                  <p className="text-[9px] font-bold text-slate-500 truncate mt-1">PERFIL: <span className="text-slate-300">{(sale.perfil || 'S/N').toUpperCase()}</span></p>
                 </div>
 
                 {/* Metrics & Actions */}
-                <div className="flex flex-col items-end gap-2 relative">
+                <div className="flex flex-col items-end gap-2 relative transition-all">
                   <div className="flex items-center gap-2">
                     <div className="text-right">
                       <p className="text-[10px] font-black text-white leading-none">{dayjs(sale.fechaVencimiento).format('DD MMM')}</p>
@@ -743,14 +838,14 @@ export default function Sales() {
                     <div className="w-[1px] h-6 bg-slate-800"></div>
                     
                     <button 
-                      onClick={() => setOpenActionMenuId(openActionMenuId === sale.id ? null : sale.id)}
+                      onClick={(e) => toggleActionMenu(e, sale.id)}
                       className={`p-2.5 rounded-xl transition-all ${openActionMenuId === sale.id ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
                     >
                       <MoreHorizontal size={18} />
                     </button>
 
                     {openActionMenuId === sale.id && (
-                      <div className="absolute right-0 top-[calc(100%+8px)] z-[150] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 min-w-[160px] animate-in fade-in zoom-in-95 duration-200 backdrop-blur-xl">
+                      <div className={`absolute right-0 z-[150] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 min-w-[160px] animate-in fade-in zoom-in-95 duration-200 backdrop-blur-xl ${menuDirection === 'down' ? 'top-[calc(100%+8px)]' : 'bottom-[calc(100%+8px)] origin-bottom'}`}>
                         {sale.estado === 'Activo' && !isExpired ? (
                           <>
                             <button onClick={() => { handleWhatsAppReminder(sale); setOpenActionMenuId(null); }} className="w-full flex items-center gap-3 p-3 hover:bg-emerald-500/10 text-emerald-500 rounded-xl transition-all">
@@ -761,12 +856,7 @@ export default function Sales() {
                             </button>
                             <button 
                               onClick={() => {
-                                setEditingSale(sale);
-                                setEditFormData({
-                                  id: sale.id, cliente: sale.cliente, contacto: sale.contacto,
-                                  perfil: sale.perfil || '', tipoCliente: sale.tipoCliente || 'Final'
-                                });
-                                setIsEditModalOpen(true);
+                                handleOpenEditModal(sale);
                                 setOpenActionMenuId(null);
                               }}
                               className="w-full flex items-center gap-3 p-3 hover:bg-slate-800 text-slate-400 rounded-xl transition-all"
@@ -837,17 +927,14 @@ export default function Sales() {
           <div className="fixed inset-0 bg-black/60 backdrop-blur-md"></div>
           <div className="relative w-full max-w-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/20 rounded-[32px] border border-slate-800 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-300 h-[85vh] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-7 py-5 border-b border-slate-800 shrink-0">
-              <h3 className="text-xl font-black italic tracking-tighter uppercase text-white">Nueva Venta</h3>
+              <h3 className="text-xl font-black italic tracking-tighter uppercase text-white">
+                {formData.items[0]?.prevId ? 'Renovar / Venta' : 'Nueva Venta'}
+              </h3>
               <button onClick={() => setIsModalOpen(false)} className="p-3 hover:bg-slate-800 rounded-2xl transition-all"><X size={24} /></button>
             </div>
             
             <form onSubmit={handleSubmit} className="px-7 py-5 space-y-6 overflow-y-auto scrollbar-hide flex-1">
-              {/* DATOS DEL CLIENTE */}
               <div className="space-y-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-1 bg-indigo-500 rounded-full"></div>
-                  <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-[0.3em]">Información del Cliente</h4>
-                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 relative z-[50]">
                   <div className="space-y-3">
                     <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Segmento</label>
@@ -953,13 +1040,13 @@ export default function Sales() {
                       <input required={formData.tipoCliente === 'Final'} placeholder="+57 300 000 0000" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
                     </div>
                   </div>
-                  <div className={`w-full sm:w-1/2 space-y-3 transition-all duration-500 ease-out ${formData.tipoCliente !== 'Final' ? 'sm:-ml-0' : ''}`}>
+                  <div className={`w-full sm:w-1/2 space-y-3 transition-all duration-500 ease-out`}>
                     <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Fecha de Inicio</label>
                     <div className="relative group cursor-pointer" onClick={(e) => e.currentTarget.querySelector('input').showPicker()}>
                       <div className="absolute inset-0 bg-indigo-500/5 group-hover:bg-indigo-500/10 rounded-2xl transition-all border border-slate-700/50 group-hover:border-indigo-500/50 group-hover:shadow-[0_0_20px_-5px_rgba(99,102,241,0.2)]"></div>
-                      <div className="relative flex items-center px-4 py-3 gap-4">
+                      <div className="relative flex items-center px-6 py-4 gap-6">
                         <div className="flex flex-col items-center">
-                          <span className="text-lg font-black text-indigo-400 leading-none">{dayjs(formData.fechaVenta).format('DD')}</span>
+                          <span className="text-2xl font-black text-indigo-400 leading-none">{dayjs(formData.fechaVenta).format('DD')}</span>
                           <span className="text-[8px] font-black text-slate-500 uppercase tracking-tighter">{dayjs(formData.fechaVenta).format('MMM')}</span>
                         </div>
                         <div className="w-[1px] h-8 bg-slate-800"></div>
@@ -979,26 +1066,20 @@ export default function Sales() {
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* CANASTA DE PLATAFORMAS */}
-              <div className="space-y-6 relative z-[30]">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row items-center gap-6 justify-between pt-4 border-t border-slate-800">
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-1 bg-emerald-500 rounded-full"></div>
-                    <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-[0.3em]">Plataformas Solicitadas</h4>
+                    <div className="w-8 h-8 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400"><ShoppingCart size={16}/></div>
+                    <div className="flex flex-col">
+                      <h4 className="text-xs font-black text-white uppercase italic tracking-tighter">Canasta de Plataformas</h4>
+                    </div>
                   </div>
-                  {formData.items.length === 0 && (
-                    <button type="button" onClick={addItem} className="flex items-center gap-2 text-[10px] font-black uppercase text-indigo-400 hover:text-indigo-300 transition-colors">
-                      <PlusCircle size={16} /> Añadir Cuenta
-                    </button>
-                  )}
                 </div>
 
                 <div className="space-y-4">
                   {formData.items.map((item, idx) => (
-                    <div key={idx} className="group relative bg-slate-950/40 p-4 rounded-2xl border border-slate-800/50 hover:border-indigo-500/30 transition-all">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div key={item.id || idx} className={`group relative bg-slate-950/40 p-6 rounded-3xl border border-slate-800/50 hover:border-indigo-500/30 transition-all ${item.isExiting ? 'animate-scale-out pointer-events-none' : 'animate-fade-in-up'}`}>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                         <div className="space-y-3 relative z-[10]">
                           <label className="text-[9px] font-black uppercase text-slate-600 ml-1">Plataforma</label>
                           <input 
@@ -1013,7 +1094,7 @@ export default function Sales() {
                               setActivePlatIndex(idx);
                             }} 
                             onBlur={() => setTimeout(() => setActivePlatIndex(null), 200)}
-                            className="w-full bg-slate-900 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" 
+                            className="w-full bg-slate-900 border border-slate-700/50 rounded-2xl px-5 py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" 
                           />
                           {activePlatIndex === idx && platSearchTerms[idx] && (
                             <div className="absolute z-[500] left-0 right-0 top-[100%] mt-2 bg-slate-950 border border-slate-800 rounded-2xl shadow-3xl overflow-hidden backdrop-blur-xl ring-1 ring-white/5">
@@ -1047,9 +1128,9 @@ export default function Sales() {
                         <div className="space-y-3 relative z-[5]">
                           <label className="text-[9px] font-black uppercase text-slate-600 ml-1">Perfil/Acceso</label>
                           <div className="flex gap-3">
-                            <input required placeholder="Ej: Perfil 1 / Pin 1234" value={item.perfil} onChange={e => updateItem(idx, 'perfil', e.target.value)} className="flex-1 bg-slate-900 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" />
+                            <input required placeholder="Ej: Perfil 1 / Pin 1234" value={item.perfil} onChange={e => updateItem(idx, 'perfil', e.target.value)} className="flex-1 bg-slate-900 border border-slate-700/50 rounded-2xl px-5 py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" />
                             {formData.items.length > 1 && (
-                              <button type="button" onClick={() => removeItem(idx)} className="p-4 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-2xl transition-all"><Trash2 size={16}/></button>
+                              <button type="button" onClick={() => removeItem(item.id)} className="p-4 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-2xl transition-all"><Trash2 size={16}/></button>
                             )}
                           </div>
                           {item.prevId && item.oldExpiry && (
@@ -1064,15 +1145,10 @@ export default function Sales() {
                       </div>
                     </div>
                   ))}
+                  <button type="button" onClick={() => { addItem(); setPlatSearchTerms(prev => [...prev, '']); }} className="w-max mx-auto px-10 py-3 bg-indigo-600/10 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-2xl transition-all font-black text-[9px] uppercase tracking-widest border border-dashed border-indigo-500/30 hover:border-indigo-500 flex items-center justify-center gap-2">
+                    <PlusCircle size={14} /> Añadir Cuenta
+                  </button>
                 </div>
-
-                {formData.items.length > 0 && (
-                  <div className="flex justify-center pt-4">
-                    <button type="button" onClick={addItem} className="flex items-center gap-3 px-6 py-3 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-indigo-500/20 active:scale-95">
-                      <PlusCircle size={18} strokeWidth={3} /> Añadir Otra Cuenta
-                    </button>
-                  </div>
-                )}
               </div>
 
               {/* RESUMEN DE PRECIOS */}
@@ -1080,7 +1156,7 @@ export default function Sales() {
                 const { sumVenta, discount, finalVenta, totalGanancia } = calculateTotals();
                 if (sumVenta === 0) return null;
                 return (
-                  <div className="bg-indigo-600/5 border border-indigo-500/20 p-5 rounded-2xl space-y-3 animate-in slide-in-from-bottom-4">
+                  <div className="bg-indigo-600/5 border border-indigo-500/20 p-8 rounded-[40px] space-y-6 animate-in slide-in-from-bottom-4">
                     <div className="flex justify-between items-center pb-4 border-b border-indigo-500/10">
                       <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Subtotal Bruto</span>
                       <span className="text-sm font-bold text-slate-300">${sumVenta.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".")}</span>
@@ -1105,9 +1181,9 @@ export default function Sales() {
                 );
               })()}
 
-              <div className="flex gap-4 pt-4">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3.5 bg-slate-800 hover:bg-slate-700 text-slate-400 font-black rounded-2xl transition-all uppercase text-[10px] tracking-widest">Descartar</button>
-                <button type="submit" disabled={loading} className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-2xl shadow-xl transition-all uppercase text-[10px] tracking-widest">
+              <div className="flex gap-6 pt-10 mt-auto">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-5 bg-slate-800 hover:bg-slate-700 text-slate-400 font-black rounded-3xl transition-all uppercase text-[10px] tracking-widest">Descartar</button>
+                <button type="submit" disabled={loading} className="flex-1 py-5 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-3xl shadow-xl transition-all uppercase text-[10px] tracking-widest">
                   {loading ? 'Procesando...' : 'Finalizar Registro'}
                 </button>
               </div>
@@ -1119,7 +1195,7 @@ export default function Sales() {
       {isEditModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-md"></div>
-          <div className="relative w-full max-w-lg bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl animate-in zoom-in-95 duration-300 overflow-hidden">
+          <div className="relative w-full max-w-lg bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/20 rounded-[32px] border border-slate-800 shadow-2xl animate-in zoom-in-95 duration-300 h-[85vh] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-7 py-5 border-b border-slate-800 shrink-0">
               <h3 className="text-xl font-black italic tracking-tighter uppercase text-white">Editar Perfil</h3>
               <button onClick={() => setIsEditModalOpen(false)} className="p-3 hover:bg-slate-800 rounded-2xl transition-all"><X size={24} /></button>
@@ -1232,16 +1308,27 @@ export default function Sales() {
         </div>
       )}
       {selectedSales.length > 0 && (
-        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[80] bg-slate-900/80 backdrop-blur-xl border border-indigo-500/30 px-8 py-5 rounded-[30px] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] flex items-center gap-10 animate-in slide-in-from-bottom-10 border-t border-t-white/5">
-          <div className="flex flex-col">
-            <span className="text-[11px] font-black uppercase text-indigo-400 tracking-[0.2em]">{selectedSales.length} Seleccionados</span>
-            <span className="text-[8px] font-bold text-slate-500 uppercase">Combo en preparación</span>
+        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[80] bg-slate-900/80 backdrop-blur-xl border border-indigo-500/30 px-8 py-5 rounded-[30px] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] flex items-center sm:gap-10 gap-6 animate-in slide-in-from-bottom-10 border-t border-t-white/5 max-w-[95vw] sm:max-w-none">
+          <div className="flex flex-col shrink-0">
+            <span className={`text-[11px] font-black uppercase tracking-[0.2em] transition-colors ${selectionStatus.isValid ? 'text-indigo-400' : 'text-amber-500'}`}>
+              {selectedSales.length} {selectionStatus.isValid ? 'Seleccionados' : 'Incompatibles'}
+            </span>
+            <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">{selectionStatus.isValid ? 'Combo en preparación' : selectionStatus.message}</span>
           </div>
           <div className="flex gap-4">
-            <button onClick={handleOpenBulkRenovate} className="flex items-center gap-3 px-8 py-4 bg-indigo-600 text-white text-[10px] font-black uppercase rounded-2xl hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95">
-              <RefreshCw size={16} /> Renovar Combo
-            </button>
-            <button onClick={() => setSelectedSales([])} className="px-8 py-4 bg-slate-800 text-slate-400 text-[10px] font-black uppercase rounded-2xl hover:bg-slate-700 transition-all active:scale-95">
+            {selectionStatus.isValid ? (
+              <button 
+                onClick={handleOpenBulkRenovate} 
+                className="flex items-center gap-3 sm:px-8 px-5 py-4 bg-indigo-600 text-white text-[10px] font-black uppercase rounded-2xl hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95 whitespace-nowrap"
+              >
+                <RefreshCw size={16} /> Renovar Combo
+              </button>
+            ) : (
+              <div className="flex items-center gap-3 px-6 py-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-[9px] font-black text-amber-500 uppercase tracking-widest italic animate-pulse">
+                <ShoppingCart size={14} className="opacity-60" /> {selectionStatus.details}
+              </div>
+            )}
+            <button onClick={() => setSelectedSales([])} className="sm:px-8 px-5 py-4 bg-slate-800 text-slate-400 text-[10px] font-black uppercase rounded-2xl hover:bg-slate-700 transition-all active:scale-95">
               Cancelar
             </button>
           </div>
