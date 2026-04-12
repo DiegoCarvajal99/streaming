@@ -218,7 +218,12 @@ export default function Sales() {
   const handleOpenEditModal = (sale) => {
     setEditingSale(sale);
     setEditFormData({
-      cliente: sale.cliente, contacto: sale.contacto, perfil: sale.perfil, tipoCliente: sale.tipoCliente
+      cliente: sale.cliente, 
+      contacto: sale.contacto, 
+      perfil: sale.perfil, 
+      tipoCliente: sale.tipoCliente,
+      fechaCompra: dayjs(sale.fechaCompra).format('YYYY-MM-DD'),
+      plataformaId: sale.plataformaId
     });
     setIsEditModalOpen(true);
   };
@@ -326,8 +331,20 @@ export default function Sales() {
     e.preventDefault();
     setLoading(true);
     try {
+      const platform = platforms.find(p => p.id === editFormData.plataformaId);
+      const vigencia = platform ? (Number(platform.vigenciaDias) || 30) : 30;
+      
+      const newStart = dayjs(editFormData.fechaCompra);
+      const newExpiry = newStart.add(vigencia, 'day');
+      
       await updateDoc(doc(db, 'ventas', editingSale.id), {
-        cliente: editFormData.cliente, contacto: editFormData.contacto, perfil: editFormData.perfil, tipoCliente: editFormData.tipoCliente
+        cliente: editFormData.cliente, 
+        contacto: editFormData.contacto, 
+        perfil: editFormData.perfil, 
+        tipoCliente: editFormData.tipoCliente,
+        fechaCompra: newStart.toISOString(),
+        fechaVencimiento: newExpiry.toISOString(),
+        mesRegistro: newExpiry.format('MMMM YYYY')
       });
       setIsEditModalOpen(false);
       fetchData();
@@ -1156,9 +1173,36 @@ export default function Sales() {
                 </div>
               )}
               
-              <div className="space-y-3">
-                <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Acceso / Perfil</label>
-                <input required value={editFormData.perfil} onChange={e => setEditFormData({...editFormData, perfil: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Acceso / Perfil</label>
+                  <input required value={editFormData.perfil} onChange={e => setEditFormData({...editFormData, perfil: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                </div>
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Fecha de Inicio</label>
+                  <div className="relative group cursor-pointer" onClick={(e) => e.currentTarget.querySelector('input').showPicker()}>
+                    <div className="absolute inset-0 bg-indigo-500/5 group-hover:bg-indigo-500/10 rounded-2xl transition-all border border-slate-700/50 group-hover:border-indigo-500/50 group-hover:shadow-[0_0_20px_-5px_rgba(99,102,241,0.2)]"></div>
+                    <div className="relative flex items-center px-4 py-3 gap-4">
+                      <div className="flex flex-col items-center">
+                        <span className="text-lg font-black text-indigo-400 leading-none">{dayjs(editFormData.fechaCompra).format('DD')}</span>
+                        <span className="text-[8px] font-black text-slate-500 uppercase tracking-tighter">{dayjs(editFormData.fechaCompra).format('MMM')}</span>
+                      </div>
+                      <div className="w-[1px] h-8 bg-slate-800"></div>
+                      <div className="flex-1">
+                        <h4 className="text-[10px] font-black text-white uppercase tracking-widest">{dayjs(editFormData.fechaCompra).format('dddd')}</h4>
+                        <p className="text-[9px] font-bold text-slate-500 uppercase">{dayjs(editFormData.fechaCompra).format('MMMM [del] YYYY')}</p>
+                      </div>
+                      <Calendar size={20} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                    </div>
+                    <input 
+                      required 
+                      type="date" 
+                      value={editFormData.fechaCompra} 
+                      onChange={e => setEditFormData({...editFormData, fechaCompra: e.target.value})} 
+                      className="absolute inset-0 opacity-0 cursor-pointer" 
+                    />
+                  </div>
+                </div>
               </div>
               <div className="flex gap-4 pt-4">
                 <button type="button" onClick={() => setIsEditModalOpen(false)} className="flex-1 py-3.5 bg-slate-800 text-slate-400 font-black rounded-2xl transition-all uppercase text-[10px] tracking-widest">Descartar</button>

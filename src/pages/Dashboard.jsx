@@ -44,7 +44,7 @@ export default function Dashboard() {
 
   const [loading, setLoading] = useState(true);
   const [segmentFilter, setSegmentFilter] = useState('Todos');
-  const [monthFilter, setMonthFilter] = useState('Todos');
+  const [monthFilter, setMonthFilter] = useState(dayjs().format('MMMM').toLowerCase());
   const [platforms, setPlatforms] = useState([]);
   const [distribuidores, setDistribuidores] = useState([]);
 
@@ -121,6 +121,7 @@ export default function Dashboard() {
     }
   };
 
+  const [platformRanking, setPlatformRanking] = useState([]);
   const fetchSales = async () => {
     try {
       const [salesSnap, platformsSnap, dSnap] = await Promise.all([
@@ -321,38 +322,56 @@ export default function Dashboard() {
   };
 
   const processData = (sales, segment, month, year) => {
-    let filtered = [...sales];
-    if (segment !== 'Todos') filtered = filtered.filter(s => s.tipoCliente === segment);
-    
-    // El mapa de meses siempre se inicializa con los nombres abreviados de MESES_ABR
     const monthlyDataMap = {};
     MESES_ABR.forEach((m, index) => { 
        monthlyDataMap[index] = { name: m, totalVentas: 0, ganancia: 0, index: index }; 
     });
 
-    // Lógica Contable: La venta pertenece al mes en que se realizó la transacción
     const getAccountingDate = (sale) => {
       return parseDate(sale.fechaCompra || sale.fechaVenta);
     };
 
-    // Filtrar por año seleccionado (usando la fecha contable ya ajustada)
-    filtered = filtered.filter(s => {
+    // 1. Filtrar ventas por AÑO
+    let yearSales = sales.filter(s => {
        const d = getAccountingDate(s);
        return d.isValid() && d.year().toString() === year;
     });
 
-    // Si se selecciona un mes, filtrar por índice de mes (0=Enero, 1=Febrero, etc.)
-    // Usamos MESES_FULL para obtener el índice a partir del nombre
+    // 2. Filtrar ventas para ESTADÍSTICAS (Año + Mes + Segmento)
+    let statsSales = [...yearSales];
     if (month !== 'Todos') {
       const selectedMonthIdx = MESES_FULL.indexOf(month.toLowerCase());
-      filtered = filtered.filter(s => {
-         const d = getAccountingDate(s);
-         return d.month() === selectedMonthIdx;
-      });
+      statsSales = statsSales.filter(s => getAccountingDate(s).month() === selectedMonthIdx);
+    }
+    if (segment !== 'Todos') {
+      statsSales = statsSales.filter(s => s.tipoCliente === segment);
     }
 
-    // Acumular datos en el mapa mensual
-    filtered.forEach(sale => {
+    // 3. Calcular Ranking (Año + Mes, IGNORAR Segmento)
+    let rankingSales = [...yearSales];
+    if (month !== 'Todos') {
+      const selectedMonthIdx = MESES_FULL.indexOf(month.toLowerCase());
+      rankingSales = rankingSales.filter(s => getAccountingDate(s).month() === selectedMonthIdx);
+    }
+
+    const platformCounts = {};
+    rankingSales.forEach(s => {
+      const name = (s.plataformaNombre || 'Otra').trim().toUpperCase();
+      platformCounts[name] = (platformCounts[name] || 0) + 1;
+    });
+    
+    const ranking = Object.entries(platformCounts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+    setPlatformRanking(ranking);
+
+    // 4. Preparar Data para Gráficas (SIEMPRE todo el año del filtro de año, respetando Segmento)
+    let chartSales = [...yearSales];
+    if (segment !== 'Todos') {
+      chartSales = chartSales.filter(s => s.tipoCliente === segment);
+    }
+    
+    chartSales.forEach(sale => {
       const d = getAccountingDate(sale);
       if (d.isValid()) {
         const monthIndex = d.month();
@@ -363,26 +382,22 @@ export default function Dashboard() {
       }
     });
 
-    let chartData = Object.values(monthlyDataMap).sort((a, b) => a.index - b.index);
-    
-    // Si el usuario seleccionó un mes específico, mostrar SOLO ese mes en la gráfica
-    if (month !== 'Todos') {
-      const selectedMonthIdx = MESES_FULL.indexOf(month.toLowerCase());
-      chartData = chartData.filter(d => d.index === selectedMonthIdx);
-    }
+    const chartData = Object.values(monthlyDataMap).sort((a, b) => a.index - b.index);
+    setData(chartData);
 
-    const totalGanancia = filtered.reduce((sum, s) => sum + getGanancia(s), 0);
-    const totalVentas = filtered.length;
-    const vDist = filtered.filter(s => s.tipoCliente === 'Distribuidor').length;
-    
+    // Stats finales basados en statsSales (Año + Mes + Segmento)
+    const totalGanancia = statsSales.reduce((sum, s) => sum + getGanancia(s), 0);
+    const totalVentas = statsSales.length;
+    const vFinal = statsSales.filter(s => s.tipoCliente === 'Final').length;
+    const vDist = statsSales.filter(s => s.tipoCliente === 'Distribuidor').length;
+
     setStats({
       totalGanancia, 
       totalVentas, 
-      ventasFinal: filtered.filter(s => s.tipoCliente === 'Final').length, 
+      ventasFinal: vFinal,
       ventasDistribuidor: vDist,
-      ticketPromedio: totalVentas > 0 ? (totalGanancia / totalVentas) : 0
+      ticketPromedio: totalVentas > 0 ? Math.round(totalGanancia / totalVentas) : 0
     });
-    setData(chartData);
   };
 
   const processDailyStats = () => {
@@ -579,93 +594,148 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ZONA DE ACCIÓN: VENCIMIENTOS DE HOY (PREMIUM UI) */}
-      <div className="space-y-6">
-        <div className="flex items-center gap-4">
-           <div className="w-2 h-8 bg-amber-500 rounded-full animate-pulse shadow-[0_0_15px_rgba(245,158,11,0.5)]"></div>
-           <div className="flex flex-col">
-              <h3 className="text-2xl font-black text-white uppercase italic tracking-tighter">Zona de Acción</h3>
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Cuentas que vencen hoy {dayjs().format('DD MMM')}</p>
-           </div>
-        </div>
+      {/* CONTENEDOR DE ACCIÓN Y RANKING */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* ZONA DE ACCIÓN: VENCIMIENTOS DE HOY */}
+        <div className="lg:col-span-2 space-y-6">
+          <div className="flex items-center gap-4">
+             <div className="w-2 h-8 bg-amber-500 rounded-full animate-pulse shadow-[0_0_15px_rgba(245,158,11,0.5)]"></div>
+             <div className="flex flex-col">
+                <h3 className="text-2xl font-black text-white uppercase italic tracking-tighter">Zona de Acción</h3>
+                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Cuentas que vencen hoy {dayjs().format('DD MMM')}</p>
+             </div>
+          </div>
 
-        {todayExpiries.length > 0 ? (
-          <div className="space-y-4">
-            {/* VISTA ESCRITORIO (TABLA) */}
-            <div className="hidden sm:block bg-slate-900/40 border border-slate-800 rounded-[40px] overflow-hidden shadow-2xl">
-               <table className="w-full text-left">
-                 <thead>
-                   <tr className="border-b border-slate-800">
-                      <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest">Cliente</th>
-                      <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest">Plataforma</th>
-                      <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest text-center">Perfil</th>
-                      <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest text-right">Acciones</th>
-                   </tr>
-                 </thead>
-                 <tbody className="divide-y divide-slate-800/50">
-                    {todayExpiries.map((sale, idx) => (
-                      <tr key={idx} className="group hover:bg-slate-800/20 transition-all duration-300">
-                        <td className="px-8 py-5">
-                           <div className="flex flex-col gap-1">
-                              <span className="text-[11px] font-black text-white uppercase">{sale.cliente}</span>
-                              <span className="text-[8px] font-bold text-slate-500 uppercase">{sale.contacto}</span>
-                           </div>
-                        </td>
-                        <td className="px-8 py-5">
-                           <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-lg bg-slate-800 p-1 flex items-center justify-center border border-slate-700">
-                                 <img src={sale.plataformaImagenUrl} className="w-full h-full object-contain" alt="" />
-                              </div>
-                              <span className="text-[10px] font-black text-slate-300 uppercase">{sale.plataformaNombre}</span>
-                           </div>
-                        </td>
-                        <td className="px-8 py-5 text-center">
-                           <span className="px-3 py-1 bg-slate-950/50 border border-slate-800 rounded-lg text-[10px] font-mono text-slate-400">{sale.perfil || 'N/A'}</span>
-                        </td>
-                        <td className="px-8 py-5">
-                           <div className="flex items-center justify-end gap-3">
-                              <button onClick={() => handleWhatsAppReminder(sale)} className="p-2.5 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-xl transition-all" title="WhatsApp"><MessageCircle size={16}/></button>
-                              <button onClick={() => handleOpenBulkRenovate([sale.id])} className="p-2.5 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500 hover:text-white rounded-xl transition-all" title="Renovar"><RefreshCw size={16}/></button>
-                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                 </tbody>
-               </table>
-            </div>
+          {todayExpiries.length > 0 ? (
+            <div className="space-y-4">
+              {/* VISTA ESCRITORIO (TABLA) */}
+              <div className="hidden sm:block bg-slate-900/40 border border-slate-800 rounded-[40px] overflow-hidden shadow-2xl">
+                 <table className="w-full text-left">
+                   <thead>
+                     <tr className="border-b border-slate-800">
+                        <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest">Cliente</th>
+                        <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest">Plataforma</th>
+                        <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest text-center">Perfil</th>
+                        <th className="px-8 py-5 text-[9px] font-black uppercase text-slate-500 tracking-widest text-right">Acciones</th>
+                     </tr>
+                   </thead>
+                   <tbody className="divide-y divide-slate-800/50">
+                      {todayExpiries.map((sale, idx) => (
+                        <tr key={idx} className="group hover:bg-slate-800/20 transition-all duration-300">
+                          <td className="px-8 py-5">
+                             <div className="flex flex-col gap-1">
+                                <span className="text-[11px] font-black text-white uppercase">{sale.cliente}</span>
+                                <span className="text-[8px] font-bold text-slate-500 uppercase">{sale.contacto}</span>
+                             </div>
+                          </td>
+                          <td className="px-8 py-5">
+                             <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-slate-800 p-1 flex items-center justify-center border border-slate-700">
+                                   <img src={sale.plataformaImagenUrl} className="w-full h-full object-contain" alt="" />
+                                </div>
+                                <span className="text-[10px] font-black text-slate-300 uppercase">{sale.plataformaNombre}</span>
+                             </div>
+                          </td>
+                          <td className="px-8 py-5 text-center">
+                             <span className="px-3 py-1 bg-slate-950/50 border border-slate-800 rounded-lg text-[10px] font-mono text-slate-400">{sale.perfil || 'N/A'}</span>
+                          </td>
+                          <td className="px-8 py-5">
+                             <div className="flex items-center justify-end gap-3">
+                                <button onClick={() => handleWhatsAppReminder(sale)} className="p-2.5 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-xl transition-all" title="WhatsApp"><MessageCircle size={16}/></button>
+                                <button onClick={() => handleOpenBulkRenovate([sale.id])} className="p-2.5 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500 hover:text-white rounded-xl transition-all" title="Renovar"><RefreshCw size={16}/></button>
+                             </div>
+                          </td>
+                        </tr>
+                      ))}
+                   </tbody>
+                 </table>
+              </div>
 
-            {/* VISTA MÓVIL (CARDS) */}
-            <div className="sm:hidden space-y-3">
-              {todayExpiries.map((sale, idx) => (
-                <div key={idx} className="bg-slate-900/40 border border-slate-800 p-5 rounded-3xl flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-4 flex-1 min-w-0">
-                    <div className="w-10 h-10 rounded-2xl bg-slate-800 p-1.5 flex items-center justify-center border border-slate-700 flex-shrink-0">
-                      <img src={sale.plataformaImagenUrl} className="w-full h-full object-contain" alt="" />
-                    </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-[11px] font-black text-white uppercase truncate">{sale.cliente}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[8px] font-bold text-indigo-400 uppercase tracking-widest">{sale.plataformaNombre}</span>
-                        <span className="px-1.5 py-0.5 bg-slate-950/50 rounded-md text-[7px] font-mono text-slate-500">{sale.perfil || 'N/A'}</span>
+              {/* VISTA MÓVIL (CARDS) */}
+              <div className="sm:hidden space-y-3">
+                {todayExpiries.map((sale, idx) => (
+                  <div key={idx} className="bg-slate-900/40 border border-slate-800 p-5 rounded-3xl flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                      <div className="w-10 h-10 rounded-2xl bg-slate-800 p-1.5 flex items-center justify-center border border-slate-700 flex-shrink-0">
+                        <img src={sale.plataformaImagenUrl} className="w-full h-full object-contain" alt="" />
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[11px] font-black text-white uppercase truncate">{sale.cliente}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] font-bold text-indigo-400 uppercase tracking-widest">{sale.plataformaNombre}</span>
+                          <span className="px-1.5 py-0.5 bg-slate-950/50 rounded-md text-[7px] font-mono text-slate-500">{sale.perfil || 'N/A'}</span>
+                        </div>
                       </div>
                     </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => handleWhatsAppReminder(sale)} className="p-3 bg-emerald-500/10 text-emerald-500 rounded-xl active:scale-95 transition-all"><MessageCircle size={16}/></button>
+                      <button onClick={() => handleOpenBulkRenovate([sale.id])} className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl active:scale-95 transition-all"><RefreshCw size={16}/></button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => handleWhatsAppReminder(sale)} className="p-3 bg-emerald-500/10 text-emerald-500 rounded-xl active:scale-95 transition-all"><MessageCircle size={16}/></button>
-                    <button onClick={() => handleOpenBulkRenovate([sale.id])} className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl active:scale-95 transition-all"><RefreshCw size={16}/></button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-slate-900/20 border border-slate-800/50 rounded-[40px] p-8 sm:p-12 text-center border-dashed">
+              <div className="inline-flex p-5 sm:p-6 bg-emerald-500/5 rounded-full text-emerald-500 mb-4 animate-bounce">
+                <CheckCircle2 size={32} />
+              </div>
+              <p className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-[0.3em]">¡Todo al día! No hay vencimientos para hoy.</p>
+            </div>
+          )}
+        </div>
+
+        {/* RANKING DE TENDENCIAS */}
+        <div className="space-y-6">
+          <div className="flex items-center gap-4">
+             <div className="w-2 h-8 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_15px_rgba(99,102,241,0.5)]"></div>
+             <div className="flex flex-col">
+                <h3 className="text-2xl font-black text-white uppercase italic tracking-tighter">Ranking Mensual</h3>
+                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Tendencias de venta {monthFilter === 'Todos' ? 'del año' : 'de ' + monthFilter}</p>
+             </div>
+          </div>
+
+          <div className="bg-slate-900/40 border border-slate-800 p-6 rounded-[40px] shadow-2xl space-y-4">
+            {platformRanking.length > 0 ? (
+              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-indigo-500/20 hover:scrollbar-thumb-indigo-500/40">
+                {platformRanking.map((item, idx) => (
+                  <div key={item.name} className="group relative">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-3">
+                         <div className="w-6 h-6 rounded-lg bg-slate-800 flex items-center justify-center text-[10px] font-black text-indigo-400 border border-slate-700">
+                           {idx + 1}
+                         </div>
+                         <span className="text-[10px] font-black text-slate-300 uppercase tracking-tight">{item.name}</span>
+                      </div>
+                      <span className="text-[10px] font-black text-white tracking-tighter">{item.count} ventas</span>
+                    </div>
+                    <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                       <div 
+                         className="h-full bg-indigo-600 rounded-full transition-all duration-1000 ease-out shadow-[0_0_10px_rgba(79,70,229,0.4)]"
+                         style={{ width: `${(item.count / platformRanking[0].count) * 100}%` }}
+                       ></div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
+            ) : (
+              <div className="py-12 text-center space-y-3">
+                <ShoppingCart size={24} className="text-slate-700 mx-auto" />
+                <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest tracking-[0.2em]">Sin datos este mes</p>
+              </div>
+            )}
+            
+            <div className="pt-4 mt-4 border-t border-slate-800">
+               <div className="flex items-center justify-between px-2">
+                  <div className="flex flex-col">
+                    <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Total Periodo</span>
+                    <span className="text-sm font-black text-indigo-400 tracking-tighter">{platformRanking.reduce((acc, i) => acc + i.count, 0)} Unidades</span>
+                  </div>
+                  <Activity size={20} className="text-indigo-500/30" />
+               </div>
             </div>
           </div>
-        ) : (
-          <div className="bg-slate-900/20 border border-slate-800/50 rounded-[40px] p-8 sm:p-12 text-center border-dashed">
-            <div className="inline-flex p-5 sm:p-6 bg-emerald-500/5 rounded-full text-emerald-500 mb-4 animate-bounce">
-              <CheckCircle2 size={32} />
-            </div>
-            <p className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-[0.3em]">¡Todo al día! No hay vencimientos para hoy.</p>
-          </div>
-        )}
+        </div>
       </div>
 
       {/* STATS BENTO GRID */}
