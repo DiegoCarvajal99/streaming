@@ -202,22 +202,21 @@ export default function Sales() {
         }
       });
 
-      // Ordenar: Día (desc) -> Combo Group (desc) -> Individual (desc)
+      // Ordenar: Tiempo (desc) -> Combo Group (desc) -> Individual (desc)
       salesData.sort((a, b) => {
         const timeA = a.comboId ? comboTimestamps[a.comboId] : dayjs(a.fechaCompra).valueOf();
         const timeB = b.comboId ? comboTimestamps[b.comboId] : dayjs(b.fechaCompra).valueOf();
         
         if (timeB !== timeA) return timeB - timeA;
         
-        // Agrupar por CLIENTE y luego por comboId para asegurar que no se intercalen
-        if (a.cliente !== b.cliente) return a.cliente.localeCompare(b.cliente);
-        
+        // Si el tiempo es el mismo (ej: items del mismo combo), agrupar por comboId
         if (a.comboId !== b.comboId) {
           const cA = a.comboId || '';
           const cB = b.comboId || '';
           return cB.localeCompare(cA);
         }
         
+        // Como último recurso, mantener orden por ID
         return b.id.localeCompare(a.id);
       });
       
@@ -337,7 +336,13 @@ export default function Sales() {
     setLoading(true);
     try {
       const comboId = `combo-${Date.now()}`;
-      const base = dayjs(formData.fechaVenta);
+      const actualTime = dayjs();
+      const base = dayjs(formData.fechaVenta)
+        .hour(actualTime.hour())
+        .minute(actualTime.minute())
+        .second(actualTime.second())
+        .millisecond(actualTime.millisecond());
+
       const discountPerItem = count > 0 ? (discount / count) : 0;
 
       const savePromises = formData.items.map(async (item) => {
@@ -422,7 +427,12 @@ export default function Sales() {
       const platform = platforms.find(p => p.id === editFormData.plataformaId);
       const vigencia = platform ? (Number(platform.vigenciaDias) || 30) : 30;
       
-      const newStart = dayjs(editFormData.fechaCompra);
+      const oldTime = dayjs(editingSale.fechaCompra);
+      const newStart = dayjs(editFormData.fechaCompra)
+        .hour(oldTime.hour())
+        .minute(oldTime.minute())
+        .second(oldTime.second())
+        .millisecond(oldTime.millisecond());
       const newExpiry = newStart.add(vigencia, 'day');
       
       await updateDoc(doc(db, 'ventas', editingSale.id), {

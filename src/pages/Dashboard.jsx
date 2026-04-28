@@ -153,19 +153,20 @@ export default function Dashboard() {
         }
       });
 
-      // Ordenar: Día (desc) -> Combo Group (desc) -> Individual (desc)
+      // Ordenar: Tiempo (desc) -> Combo Group (desc) -> Individual (desc)
       salesData.sort((a, b) => {
         const timeA = a.comboId ? comboTimestamps[a.comboId] : dayjs(a.fechaCompra).valueOf();
         const timeB = b.comboId ? comboTimestamps[b.comboId] : dayjs(b.fechaCompra).valueOf();
         
         if (timeB !== timeA) return timeB - timeA;
-        // Agrupar por CLIENTE y luego por comboId para asegurar que no se intercalen
-        if (a.cliente !== b.cliente) return a.cliente.localeCompare(b.cliente);
+        
+        // Si el tiempo es el mismo (ej: items del mismo combo), agrupar por comboId
         if (a.comboId !== b.comboId) {
           const cA = a.comboId || '';
           const cB = b.comboId || '';
           return cB.localeCompare(cA);
         }
+        
         return b.id.localeCompare(a.id);
       });
       
