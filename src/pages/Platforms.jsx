@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react';
 import { collection, addDoc, getDocs, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../firebase';
+import PriceImageGenerator from '../components/PriceImageGenerator';
 import { 
   PlusCircle, Search, X, ChevronDown, 
-  Layers, CreditCard, Clock, Image as ImageIcon, Settings2, Edit3, AlertCircle, TrendingUp
+  Layers, CreditCard, Clock, Image as ImageIcon, Settings2, Edit3, AlertCircle, TrendingUp,
+  FileImage
 } from 'lucide-react';
 
 export default function Platforms() {
   const [platforms, setPlatforms] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [editingPlatform, setEditingPlatform] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -109,9 +112,17 @@ export default function Platforms() {
           <h2 className="text-4xl font-black tracking-tight text-white uppercase">Plataformas</h2>
           <p className="text-slate-500 mt-1 font-medium italic">Gestión de inventario y segmentación de servicios.</p>
         </div>
-        <button onClick={() => handleOpenModal()} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 px-8 rounded-3xl shadow-xl transition-all active:scale-95 uppercase text-xs tracking-widest">
-          <PlusCircle size={22} /> Nueva Plataforma
-        </button>
+        <div className="flex gap-4">
+          <button 
+            onClick={() => setIsImageModalOpen(true)} 
+            className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-black py-4 px-8 rounded-3xl shadow-xl transition-all active:scale-95 uppercase text-xs tracking-widest border border-slate-700"
+          >
+            <FileImage size={20} /> Catálogo
+          </button>
+          <button onClick={() => handleOpenModal()} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 px-8 rounded-3xl shadow-xl transition-all active:scale-95 uppercase text-xs tracking-widest">
+            <PlusCircle size={22} /> Nueva Plataforma
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6">
@@ -121,7 +132,11 @@ export default function Platforms() {
         </div>
         <div className="flex gap-4">
           <div className="relative min-w-[160px]">
-             <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-2xl px-5 py-4 text-white text-[10px] font-black uppercase appearance-none cursor-pointer pr-10 focus:ring-2 focus:ring-indigo-500/10"><option value="Todos">Segmentos</option><option value="Final">Cliente Final</option><option value="Distribuidor">Distribuidor</option></select>
+             <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-2xl px-5 py-4 text-white text-[10px] font-black uppercase appearance-none cursor-pointer pr-10 focus:ring-2 focus:ring-indigo-500/10">
+               <option value="Todos">Segmentos</option>
+               <option value="Final">Cliente Final</option>
+               <option value="Distribuidor">Distribuidor</option>
+             </select>
              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
           </div>
           <div className="relative min-w-[160px]">
@@ -137,7 +152,9 @@ export default function Platforms() {
             <div className="relative h-44">
               <img src={platform.imagenUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" onError={(e) => e.target.src = 'https://via.placeholder.com/400x225?text=' + platform.nombre} />
               <div className="absolute top-4 right-4 flex flex-col items-end gap-2">
-                <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-white/10 backdrop-blur-md shadow-xl ${platform.tipo === 'Distribuidor' ? 'bg-blue-600/80 text-white' : 'bg-purple-600/80 text-white'}`}>{platform.tipo}</span>
+                <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-white/10 backdrop-blur-md shadow-xl ${
+                  platform.tipo === 'Distribuidor' ? 'bg-blue-600/80 text-white' : 'bg-purple-600/80 text-white'
+                }`}>{platform.tipo}</span>
               </div>
             </div>
             <div className="p-8 flex-1 flex flex-col justify-between space-y-6">
@@ -264,6 +281,12 @@ export default function Platforms() {
           </div>
         </div>
       )}
+
+      <PriceImageGenerator 
+        isOpen={isImageModalOpen} 
+        onClose={() => setIsImageModalOpen(false)} 
+        platforms={platforms} 
+      />
     </div>
   );
 }

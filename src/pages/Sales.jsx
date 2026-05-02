@@ -23,7 +23,7 @@ export default function Sales() {
   const MESES_FULL = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 
   const [filterYear, setFilterYear] = useState(dayjs().year().toString());
-  const [filterMonth, setFilterMonth] = useState('Todos');
+  const [filterMonth, setFilterMonth] = useState(MESES_FULL[dayjs().month()]);
   const [filterType, setFilterType] = useState('Todos');
   const [filterStatus, setFilterStatus] = useState('Todos'); 
   const [searchTerm, setSearchTerm] = useState('');
@@ -518,7 +518,6 @@ export default function Sales() {
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-    setFilterMonth('Todos'); // reset month when year changes
   }, [filterYear]);
 
   useEffect(() => {
