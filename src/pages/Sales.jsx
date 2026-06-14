@@ -92,7 +92,8 @@ export default function Sales() {
     contacto: '', 
     items: [{ id: Date.now(), plataformaId: '', perfil: '', prevId: null, oldExpiry: null }], 
     tipoCliente: '', 
-    fechaVenta: dayjs().format('YYYY-MM-DD')
+    fechaVenta: dayjs().format('YYYY-MM-DD'),
+    hacerDescuento: false
   });
 
   const [editFormData, setEditFormData] = useState({
@@ -151,8 +152,15 @@ export default function Sales() {
     formData.items.forEach(item => {
       const p = platforms.find(pl => pl.id === item.plataformaId);
       if (p) {
+        let currentPrecioVenta = parsePrice(p.precioVenta);
+        if (formData.tipoCliente === 'Final' && formData.hacerDescuento) {
+           const distPlatform = platforms.find(pl => pl.tipo === 'Distribuidor' && pl.nombre.toLowerCase() === p.nombre.toLowerCase() && pl.activa);
+           if (distPlatform) {
+              currentPrecioVenta = parsePrice(distPlatform.precioVenta);
+           }
+        }
         sumCompra += parsePrice(p.precioCompra);
-        sumVenta += parsePrice(p.precioVenta);
+        sumVenta += currentPrecioVenta;
         count++;
       }
     });
@@ -166,14 +174,15 @@ export default function Sales() {
           else if (count >= 4) discount = 1500;
         }
       } else if (formData.tipoCliente === 'Final') {
-        discount = count * 1000;
+        if (!formData.hacerDescuento) {
+          discount = count * 1000;
+        }
       }
     }
 
     const finalVenta = sumVenta - discount;
-    // Según usuario: "a mi me hacen un descuento... y yo al distribuidor tambien le descuento lo mismo"
-    // Esto implica que el costo para el administrador también baja en el caso de Distribuidor.
-    const finalCompra = (formData.tipoCliente === 'Distribuidor' && sumCompra >= 10000) ? (sumCompra - discount) : sumCompra;
+    const isDistPrice = formData.tipoCliente === 'Distribuidor' || (formData.tipoCliente === 'Final' && formData.hacerDescuento);
+    const finalCompra = (isDistPrice && sumCompra >= 10000) ? (sumCompra - discount) : sumCompra;
 
     return {
       sumCompra, sumVenta, discount,
@@ -274,7 +283,8 @@ export default function Sales() {
       contacto: '', 
       items: [{ id: Date.now(), plataformaId: '', perfil: '', prevId: null, oldExpiry: null }], 
       tipoCliente: 'Final', 
-      fechaVenta: dayjs().format('YYYY-MM-DD')
+      fechaVenta: dayjs().format('YYYY-MM-DD'),
+      hacerDescuento: false
     });
     setPlatSearchTerms(['']);
     setIsModalOpen(true);
@@ -290,6 +300,7 @@ export default function Sales() {
       contacto: selected[0].contacto,
       tipoCliente: selected[0].tipoCliente,
       fechaVenta: dayjs(selected[0].fechaVencimiento).format('YYYY-MM-DD'),
+      hacerDescuento: false,
       items: selected.map((s, i) => ({
         id: Date.now() + i,
         plataformaId: s.plataformaId,
@@ -360,7 +371,17 @@ export default function Sales() {
         let cpraFinal = cpraBase;
 
         if (formData.tipoCliente === 'Final') {
-          vtaFinal = count >= 2 ? (vtaBase - 1000) : vtaBase;
+          if (formData.hacerDescuento) {
+            const distPlatform = platforms.find(pl => pl.tipo === 'Distribuidor' && pl.nombre.toLowerCase() === platform.nombre.toLowerCase() && pl.activa);
+            if (distPlatform) {
+              vtaBase = Number(String(distPlatform.precioVenta).replace(/\./g, '')) || 0;
+            }
+            vtaFinal = vtaBase - discountPerItem;
+            const { sumCompra } = calculateTotals();
+            if (sumCompra >= 10000) cpraFinal = cpraBase - discountPerItem;
+          } else {
+            vtaFinal = count >= 2 ? (vtaBase - 1000) : vtaBase;
+          }
         } else {
           vtaFinal = vtaBase - discountPerItem;
           const { sumCompra } = calculateTotals();
@@ -1038,6 +1059,23 @@ export default function Sales() {
                           </div>
                         )}
                       </div>
+                      
+                      <div className="pt-3 flex items-center gap-3">
+                        <button 
+                          type="button"
+                          className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${formData.hacerDescuento ? 'bg-indigo-600 border-indigo-500 shadow-[0_0_15px_rgba(79,70,229,0.4)]' : 'bg-slate-900 border-slate-700 hover:border-slate-600'}`}
+                          onClick={() => setFormData({...formData, hacerDescuento: !formData.hacerDescuento})}
+                        >
+                          {formData.hacerDescuento && <CheckCircle2 size={14} className="text-white" strokeWidth={3} />}
+                        </button>
+                        <span 
+                          className="text-[10px] font-black uppercase text-slate-400 tracking-widest cursor-pointer hover:text-indigo-300 transition-colors"
+                          onClick={() => setFormData({...formData, hacerDescuento: !formData.hacerDescuento})}
+                        >
+                          Hacer Descuento (Precio Distribuidor)
+                        </span>
+                      </div>
+                      
                     </div>
                   )}
                 </div>
@@ -1127,7 +1165,16 @@ export default function Sales() {
                                         <img src={p.imagenUrl} alt="" className="w-5 h-5 object-contain" />
                                         <span>{p.nombre}</span>
                                       </div>
-                                      <span className="text-[9px] text-emerald-400">${p.precioVenta}</span>
+                                      <span className="text-[9px] text-emerald-400">
+                                        ${(() => {
+                                          let dp = p.precioVenta;
+                                          if (formData.tipoCliente === 'Final' && formData.hacerDescuento) {
+                                            const distP = platforms.find(pl => pl.tipo === 'Distribuidor' && pl.nombre.toLowerCase() === p.nombre.toLowerCase() && pl.activa);
+                                            if (distP) dp = distP.precioVenta;
+                                          }
+                                          return dp;
+                                        })()}
+                                      </span>
                                     </div>
                                   </button>
                                 ))}
