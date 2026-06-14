@@ -361,7 +361,7 @@ export default function Sales() {
         if (!platform) return;
 
         const parsePrice = (val) => Number(String(val).replace(/\./g, '')) || 0;
-        const vtaBase = parsePrice(platform.precioVenta);
+        let vtaBase = parsePrice(platform.precioVenta);
         const cpraBase = parsePrice(platform.precioCompra);
 
         // Calcular ganancia neta para este item prorrateando el descuento
