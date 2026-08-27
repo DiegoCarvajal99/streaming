@@ -346,7 +346,16 @@ export default function Sales() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     const { count, discount } = calculateTotals();
-    if (count === 0 || !formData.tipoCliente) return;
+    
+    if (!formData.tipoCliente) {
+      alert('Por favor, selecciona un segmento de cliente.');
+      return;
+    }
+
+    if (count === 0 || formData.items.some(item => !item.plataformaId)) {
+      alert('Por favor, asegúrate de seleccionar una plataforma de la lista sugerida para todos los items.');
+      return;
+    }
 
     setLoading(true);
     try {
@@ -1160,6 +1169,7 @@ export default function Sales() {
                               newTerms[idx] = val;
                               setPlatSearchTerms(newTerms);
                               setActivePlatIndex(idx);
+                              updateItem(idx, 'plataformaId', '');
                             }} 
                             onBlur={() => setTimeout(() => setActivePlatIndex(null), 200)}
                             className="w-full bg-slate-900 border border-slate-700/50 rounded-2xl px-5 py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" 
