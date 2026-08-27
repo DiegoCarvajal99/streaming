@@ -67,6 +67,14 @@ export default function Clients() {
     c.contacto.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const getWaLink = (contacto) => {
+    if (!contacto) return '#';
+    if (contacto.startsWith('@')) return `https://api.whatsapp.com/send/?username=${contacto.substring(1)}&type=username&app_absent=0`;
+    if (contacto.startsWith('http')) return contacto;
+    const cleanPhone = contacto.replace(/\D/g, '');
+    return `https://wa.me/${cleanPhone.startsWith('57') ? cleanPhone : '57' + cleanPhone}`;
+  };
+
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-1000">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
@@ -120,7 +128,7 @@ export default function Clients() {
                       <Phone size={14} className="text-slate-500" />
                       <span className="text-slate-300 font-bold">{client.contacto}</span>
                       <a 
-                        href={`https://wa.me/${client.contacto.replace(/\D/g, '')}`} 
+                        href={getWaLink(client.contacto)} 
                         target="_blank" 
                         rel="noreferrer"
                         className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-all ml-2"
@@ -161,7 +169,7 @@ export default function Clients() {
 
              <div className="flex items-center justify-between pt-4 border-t border-slate-800/60">
                 <a 
-                  href={`https://wa.me/${client.contacto.replace(/\D/g, '')}`} 
+                  href={getWaLink(client.contacto)} 
                   target="_blank" 
                   rel="noreferrer"
                   className="flex items-center gap-2 px-4 py-3 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20 font-black text-[9px] uppercase tracking-widest shadow-lg shadow-emerald-500/5 active:scale-95 transition-all"
@@ -202,8 +210,8 @@ export default function Clients() {
                 <input required placeholder="Ej: Juan Pérez" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl px-6 py-5 text-white font-black text-xs" />
               </div>
               <div className="space-y-3">
-                <label className="text-[10px] font-black uppercase text-slate-500 ml-2">WhatsApp / Teléfono</label>
-                <input required placeholder="+57 300 000 0000" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl px-6 py-5 text-white font-black text-xs" />
+                <label className="text-[10px] font-black uppercase text-slate-500 ml-2">WhatsApp / Teléfono / Apodo</label>
+                <input required placeholder="+57 300 000 0000 o @usuario" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl px-6 py-5 text-white font-black text-xs" />
               </div>
 
               <div className="flex gap-4 pt-4">

@@ -271,6 +271,9 @@ export default function Sales() {
     // Si el contacto empieza por http, asumimos que es un link de grupo
     if (sale.contacto?.startsWith('http')) {
       window.open(`${sale.contacto}?text=${encodeURIComponent(message)}`, '_blank');
+    } else if (sale.contacto?.startsWith('@')) {
+      const username = sale.contacto.substring(1);
+      window.open(`https://api.whatsapp.com/send/?username=${username}&type=username&app_absent=0&text=${encodeURIComponent(message)}`, '_blank');
     } else {
       const url = `https://wa.me/${cleanPhone.startsWith('57') ? cleanPhone : '57' + cleanPhone}?text=${encodeURIComponent(message)}`;
       window.open(url, '_blank');
@@ -321,7 +324,8 @@ export default function Sales() {
       perfil: sale.perfil, 
       tipoCliente: sale.tipoCliente,
       fechaCompra: dayjs(sale.fechaCompra).format('YYYY-MM-DD'),
-      plataformaId: sale.plataformaId
+      plataformaId: sale.plataformaId,
+      diasExtra: ''
     });
     setIsEditModalOpen(true);
   };
@@ -454,7 +458,20 @@ export default function Sales() {
         .minute(oldTime.minute())
         .second(oldTime.second())
         .millisecond(oldTime.millisecond());
-      const newExpiry = newStart.add(vigencia, 'day');
+      const newExpiry = newStart.add(vigencia + Number(editFormData.diasExtra || 0), 'day');
+      
+      let ganancia = editingSale.ganancia;
+      if (platform && platform.id !== editingSale.plataformaId) {
+        const parsePrice = (val) => Number(String(val).replace(/\./g, '')) || 0;
+        let vtaBase = parsePrice(platform.precioVenta);
+        const cpraBase = parsePrice(platform.precioCompra);
+        
+        let vtaFinal = vtaBase;
+        if (editFormData.tipoCliente === 'Final') {
+           vtaFinal = editingSale.comboId ? vtaBase - 1000 : vtaBase;
+        }
+        ganancia = vtaFinal - cpraBase;
+      }
       
       await updateDoc(doc(db, 'ventas', editingSale.id), {
         cliente: editFormData.cliente, 
@@ -463,7 +480,11 @@ export default function Sales() {
         tipoCliente: editFormData.tipoCliente,
         fechaCompra: newStart.toISOString(),
         fechaVencimiento: newExpiry.toISOString(),
-        mesRegistro: newExpiry.format('MMMM YYYY')
+        mesRegistro: newExpiry.format('MMMM YYYY'),
+        plataformaId: platform ? platform.id : editingSale.plataformaId,
+        plataformaNombre: platform ? platform.nombre : editingSale.plataformaNombre,
+        plataformaImagenUrl: platform ? (platform.imagenUrl || '') : editingSale.plataformaImagenUrl,
+        ganancia: ganancia
       });
       setIsEditModalOpen(false);
       fetchData();
@@ -1083,8 +1104,8 @@ export default function Sales() {
                 <div className={`flex flex-col sm:flex-row ${formData.tipoCliente === 'Final' ? 'sm:gap-8' : 'sm:gap-0'} items-start transition-all duration-500 relative z-[40]`}>
                   <div className={`transition-all duration-500 ease-out overflow-hidden ${formData.tipoCliente === 'Final' ? 'w-full sm:w-1/2 opacity-100 translate-x-0' : 'w-0 h-0 opacity-0 -translate-x-10 pointer-events-none'}`}>
                     <div className="space-y-3 min-w-[200px]">
-                      <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">WhatsApp</label>
-                      <input required={formData.tipoCliente === 'Final'} placeholder="+57 300 000 0000" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                      <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">WhatsApp / Apodo</label>
+                      <input required={formData.tipoCliente === 'Final'} placeholder="+57 300 000 0000 o @usuario" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
                     </div>
                   </div>
                   <div className={`w-full sm:w-1/2 space-y-3 transition-all duration-500 ease-out`}>
@@ -1299,7 +1320,7 @@ export default function Sales() {
                     <input required value={editFormData.cliente} onChange={e => setEditFormData({...editFormData, cliente: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs" />
                   </div>
                   <div className="space-y-3">
-                    <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">WhatsApp</label>
+                    <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">WhatsApp / Apodo</label>
                     <input required value={editFormData.contacto} onChange={e => setEditFormData({...editFormData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs" />
                   </div>
                 </div>
@@ -1307,9 +1328,23 @@ export default function Sales() {
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-3">
+                  <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Plataforma</label>
+                  <div className="relative">
+                    <select required value={editFormData.plataformaId} onChange={e => setEditFormData({...editFormData, plataformaId: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs appearance-none">
+                      {platforms.filter(p => editFormData.tipoCliente === 'Distribuidor' ? p.tipo === 'Distribuidor' : p.tipo !== 'Distribuidor').map(p => (
+                        <option key={p.id} value={p.id} className="bg-slate-900">{p.nombre.toUpperCase()}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={20} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+                <div className="space-y-3">
                   <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Acceso / Perfil</label>
                   <input required value={editFormData.perfil} onChange={e => setEditFormData({...editFormData, perfil: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
                 </div>
+              </div>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-3">
                   <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Fecha de Inicio</label>
                   <div className="relative group cursor-pointer" onClick={(e) => e.currentTarget.querySelector('input').showPicker()}>
@@ -1334,6 +1369,10 @@ export default function Sales() {
                       className="absolute inset-0 opacity-0 cursor-pointer" 
                     />
                   </div>
+                </div>
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Días Extra (Garantía)</label>
+                  <input type="number" min="0" value={editFormData.diasExtra} onChange={e => setEditFormData({...editFormData, diasExtra: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" placeholder="0" />
                 </div>
               </div>
               <div className="flex gap-4 pt-4">

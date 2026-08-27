@@ -126,6 +126,9 @@ export default function Dashboard() {
     // Si el contacto empieza por http, asumimos que es un link de grupo
     if (sale.contacto?.startsWith('http')) {
       window.open(`${sale.contacto}?text=${encodeURIComponent(message)}`, '_blank');
+    } else if (sale.contacto?.startsWith('@')) {
+      const username = sale.contacto.substring(1);
+      window.open(`https://api.whatsapp.com/send/?username=${username}&type=username&app_absent=0&text=${encodeURIComponent(message)}`, '_blank');
     } else {
       window.open(`https://wa.me/${cleanPhone.startsWith('57') ? cleanPhone : '57' + cleanPhone}?text=${encodeURIComponent(message)}`, '_blank');
     }
@@ -1045,8 +1048,8 @@ export default function Dashboard() {
                 <div className={`flex flex-col sm:flex-row ${formData.tipoCliente === 'Final' ? 'sm:gap-8' : 'sm:gap-0'} items-start transition-all duration-500`}>
                   <div className={`transition-all duration-500 ease-out overflow-hidden ${formData.tipoCliente === 'Final' ? 'w-full sm:w-1/2 opacity-100 translate-x-0' : 'w-0 h-0 opacity-0 -translate-x-10 pointer-events-none'}`}>
                     <div className="space-y-3 min-w-[200px]">
-                      <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">WhatsApp</label>
-                      <input required={formData.tipoCliente === 'Final'} placeholder="+57 300 000 0000" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                      <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">WhatsApp / Apodo</label>
+                      <input required={formData.tipoCliente === 'Final'} placeholder="+57 300 000 0000 o @usuario" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
                     </div>
                   </div>
                   <div className="w-full sm:w-1/2 space-y-3 transition-all duration-500 ease-out">
