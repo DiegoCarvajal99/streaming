@@ -83,9 +83,13 @@ export default function Sales() {
     return { isValid: true };
   }, [selectedSales, sales]);
 
-  // Autocomplete Plataformas
-  const [platSearchTerms, setPlatSearchTerms] = useState(['']); // Una por cada item
+  // Autocomplete Plataformas (nueva venta)
+  const [platSearchTerms, setPlatSearchTerms] = useState(['']);
   const [activePlatIndex, setActivePlatIndex] = useState(null);
+
+  // Autocomplete Plataformas (edición)
+  const [editPlatSearchTerms, setEditPlatSearchTerms] = useState(['']);
+  const [editActivePlatIndex, setEditActivePlatIndex] = useState(null);
   
   const [formData, setFormData] = useState({
     cliente: '', 
@@ -97,7 +101,9 @@ export default function Sales() {
   });
 
   const [editFormData, setEditFormData] = useState({
-    cliente: '', contacto: '', perfil: '', tipoCliente: ''
+    cliente: '', contacto: '', tipoCliente: '', fechaVenta: dayjs().format('YYYY-MM-DD'),
+    hacerDescuento: false,
+    items: [{ id: Date.now(), plataformaId: '', perfil: '', originalId: null }]
   });
 
   const [confirmModal, setConfirmModal] = useState({
@@ -113,25 +119,18 @@ export default function Sales() {
   };
 
   const removeItem = (id) => {
-    // Iniciar animación de salida
     setFormData(prev => ({
       ...prev,
       items: prev.items.map(item => item.id === id ? { ...item, isExiting: true } : item)
     }));
-
-    // Borrado físico después de la animación (300ms)
     setTimeout(() => {
       setFormData(prev => {
         const itemIndex = prev.items.findIndex(item => item.id === id);
         if (itemIndex === -1) return prev;
-
         const filteredItems = prev.items.filter(item => item.id !== id);
-        
-        // Sincronizar términos de búsqueda
         const newTerms = [...platSearchTerms];
         newTerms.splice(itemIndex, 1);
         setPlatSearchTerms(newTerms);
-        
         return { ...prev, items: filteredItems };
       });
     }, 300);
@@ -141,6 +140,73 @@ export default function Sales() {
     const newItems = [...formData.items];
     newItems[index][key] = val;
     setFormData(prev => ({ ...prev, items: newItems }));
+  };
+
+  // ── Helpers edición multi-item ──
+  const addEditItem = () => {
+    setEditFormData(prev => ({
+      ...prev,
+      items: [...prev.items, { id: Date.now(), plataformaId: '', perfil: '', originalId: null }]
+    }));
+    setEditPlatSearchTerms(prev => [...prev, '']);
+  };
+
+  const removeEditItem = (id) => {
+    setEditFormData(prev => ({
+      ...prev,
+      items: prev.items.map(item => item.id === id ? { ...item, isExiting: true } : item)
+    }));
+    setTimeout(() => {
+      setEditFormData(prev => {
+        const idx = prev.items.findIndex(item => item.id === id);
+        if (idx === -1) return prev;
+        const filtered = prev.items.filter(item => item.id !== id);
+        const newTerms = [...editPlatSearchTerms];
+        newTerms.splice(idx, 1);
+        setEditPlatSearchTerms(newTerms);
+        return { ...prev, items: filtered };
+      });
+    }, 300);
+  };
+
+  const updateEditItem = (index, key, val) => {
+    const newItems = [...editFormData.items];
+    newItems[index][key] = val;
+    setEditFormData(prev => ({ ...prev, items: newItems }));
+  };
+
+  const calculateEditTotals = () => {
+    const parsePrice = (v) => Number(String(v).replace(/\./g, '')) || 0;
+    let sumCompra = 0, sumVenta = 0, count = 0;
+    editFormData.items.forEach(item => {
+      const p = platforms.find(pl => pl.id === item.plataformaId);
+      if (p) {
+        let vta = parsePrice(p.precioVenta);
+        if (editFormData.tipoCliente === 'Final' && editFormData.hacerDescuento) {
+          const dp = platforms.find(pl => pl.tipo === 'Distribuidor' && pl.nombre.toLowerCase() === p.nombre.toLowerCase() && pl.activa);
+          if (dp) vta = parsePrice(dp.precioVenta);
+        }
+        sumCompra += parsePrice(p.precioCompra);
+        sumVenta += vta;
+        count++;
+      }
+    });
+    let discount = 0;
+    if (count >= 2) {
+      if (editFormData.tipoCliente === 'Distribuidor' || editFormData.tipoCliente === 'Otro') {
+        if (sumCompra >= 10000) {
+          if (count === 2) discount = 500;
+          else if (count === 3) discount = 1000;
+          else if (count >= 4) discount = 1500;
+        }
+      } else if (editFormData.tipoCliente === 'Final' && !editFormData.hacerDescuento) {
+        discount = count * 1000;
+      }
+    }
+    const finalVenta = sumVenta - discount;
+    const isDistPrice = editFormData.tipoCliente === 'Distribuidor' || (editFormData.tipoCliente === 'Final' && editFormData.hacerDescuento);
+    const finalCompra = (isDistPrice && sumCompra >= 10000) ? (sumCompra - discount) : sumCompra;
+    return { sumCompra, sumVenta, discount, finalVenta, finalCompra, totalGanancia: finalVenta - finalCompra, count };
   };
 
   const calculateTotals = () => {
@@ -318,15 +384,26 @@ export default function Sales() {
 
   const handleOpenEditModal = (sale) => {
     setEditingSale(sale);
+    // Cargar todos los items del combo (o el individual)
+    const siblings = sale.comboId
+      ? sales.filter(s => s.comboId === sale.comboId && s.estado !== 'Renovado')
+      : [sale];
+    const items = siblings.map((s, i) => ({
+      id: Date.now() + i,
+      plataformaId: s.plataformaId,
+      perfil: s.perfil,
+      originalId: s.id
+    }));
     setEditFormData({
-      cliente: sale.cliente, 
-      contacto: sale.contacto, 
-      perfil: sale.perfil, 
+      cliente: sale.cliente,
+      contacto: sale.contacto,
       tipoCliente: sale.tipoCliente,
-      fechaCompra: dayjs(sale.fechaCompra).format('YYYY-MM-DD'),
-      plataformaId: sale.plataformaId,
-      diasExtra: ''
+      fechaVenta: dayjs(sale.fechaCompra).format('YYYY-MM-DD'),
+      hacerDescuento: false,
+      items
     });
+    setEditPlatSearchTerms(siblings.map(s => s.plataformaNombre));
+    setEditActivePlatIndex(null);
     setIsEditModalOpen(true);
   };
 
@@ -456,45 +533,80 @@ export default function Sales() {
 
   const handleUpdateSale = async (e) => {
     e.preventDefault();
+    if (editFormData.items.some(item => !item.plataformaId)) {
+      alert('Por favor, selecciona una plataforma de la lista sugerida para todos los items.');
+      return;
+    }
     setLoading(true);
     try {
-      const platform = platforms.find(p => p.id === editFormData.plataformaId);
-      const vigencia = platform ? (Number(platform.vigenciaDias) || 30) : 30;
-      
-      const oldTime = dayjs(editingSale.fechaCompra);
-      const newStart = dayjs(editFormData.fechaCompra)
-        .hour(oldTime.hour())
-        .minute(oldTime.minute())
-        .second(oldTime.second())
-        .millisecond(oldTime.millisecond());
-      const newExpiry = newStart.add(vigencia + Number(editFormData.diasExtra || 0), 'day');
-      
-      let ganancia = editingSale.ganancia;
-      if (platform && platform.id !== editingSale.plataformaId) {
-        const parsePrice = (val) => Number(String(val).replace(/\./g, '')) || 0;
+      const { count, discount } = calculateEditTotals();
+      const parsePrice = (v) => Number(String(v).replace(/\./g, '')) || 0;
+      const discountPerItem = count > 0 ? discount / count : 0;
+      const base = dayjs(editFormData.fechaVenta);
+      // Usar el comboId del registro original, o crear uno nuevo si hay más de 1 item
+      const comboId = editingSale.comboId || (count > 1 ? `combo-${Date.now()}` : null);
+
+      // IDs que venían del combo original (para saber cuáles eliminar)
+      const originalIds = editFormData.items.map(i => i.originalId).filter(Boolean);
+      // IDs que estaban en el combo original pero ya no están en el formulario
+      if (editingSale.comboId) {
+        const allSiblings = sales.filter(s => s.comboId === editingSale.comboId && s.estado !== 'Renovado');
+        for (const sib of allSiblings) {
+          if (!originalIds.includes(sib.id)) {
+            await deleteDoc(doc(db, 'ventas', sib.id));
+          }
+        }
+      }
+
+      const savePromises = editFormData.items.map(async (item) => {
+        const platform = platforms.find(p => p.id === item.plataformaId);
+        if (!platform) return;
+
         let vtaBase = parsePrice(platform.precioVenta);
         const cpraBase = parsePrice(platform.precioCompra);
-        
-        let vtaFinal = vtaBase;
+        let vtaFinal = vtaBase, cpraFinal = cpraBase;
+
         if (editFormData.tipoCliente === 'Final') {
-           vtaFinal = editingSale.comboId ? vtaBase - 1000 : vtaBase;
+          if (editFormData.hacerDescuento) {
+            const dp = platforms.find(pl => pl.tipo === 'Distribuidor' && pl.nombre.toLowerCase() === platform.nombre.toLowerCase() && pl.activa);
+            if (dp) vtaBase = parsePrice(dp.precioVenta);
+            vtaFinal = vtaBase - discountPerItem;
+            const { sumCompra } = calculateEditTotals();
+            if (sumCompra >= 10000) cpraFinal = cpraBase - discountPerItem;
+          } else {
+            vtaFinal = count >= 2 ? vtaBase - 1000 : vtaBase;
+          }
+        } else {
+          vtaFinal = vtaBase - discountPerItem;
+          const { sumCompra } = calculateEditTotals();
+          if (sumCompra >= 10000) cpraFinal = cpraBase - discountPerItem;
         }
-        ganancia = vtaFinal - cpraBase;
-      }
-      
-      await updateDoc(doc(db, 'ventas', editingSale.id), {
-        cliente: editFormData.cliente, 
-        contacto: editFormData.contacto, 
-        perfil: editFormData.perfil, 
-        tipoCliente: editFormData.tipoCliente,
-        fechaCompra: newStart.toISOString(),
-        fechaVencimiento: newExpiry.toISOString(),
-        mesRegistro: newExpiry.format('MMMM YYYY'),
-        plataformaId: platform ? platform.id : editingSale.plataformaId,
-        plataformaNombre: platform ? platform.nombre : editingSale.plataformaNombre,
-        plataformaImagenUrl: platform ? (platform.imagenUrl || '') : editingSale.plataformaImagenUrl,
-        ganancia: ganancia
+
+        const newExpiry = base.add(platform.vigenciaDias, 'day');
+        const payload = {
+          cliente: editFormData.cliente,
+          contacto: editFormData.contacto,
+          plataformaId: platform.id,
+          plataformaNombre: platform.nombre,
+          plataformaImagenUrl: platform.imagenUrl || '',
+          perfil: item.perfil,
+          tipoCliente: editFormData.tipoCliente,
+          fechaCompra: base.toISOString(),
+          fechaVencimiento: newExpiry.toISOString(),
+          mesRegistro: newExpiry.format('MMMM YYYY'),
+          ganancia: vtaFinal - cpraFinal,
+          estado: 'Activo',
+          comboId: count > 1 ? comboId : null
+        };
+
+        if (item.originalId) {
+          return updateDoc(doc(db, 'ventas', item.originalId), payload);
+        } else {
+          return addDoc(collection(db, 'ventas'), payload);
+        }
       });
+
+      await Promise.all(savePromises);
       setIsEditModalOpen(false);
       fetchData();
     } catch (error) { console.error(error); } finally { setLoading(false); }
@@ -1015,7 +1127,7 @@ export default function Sales() {
                         placeholder="Buscar socio..." 
                         value={formData.cliente} 
                         onChange={e => {
-                          const val = e.target.value;
+                          const val = e.target.value.toUpperCase();
                           setFormData({...formData, cliente: val});
                           if (val.trim()) {
                             const filtered = distribuidores.filter(d => d.nombre?.toLowerCase().includes(val.toLowerCase()));
@@ -1056,7 +1168,7 @@ export default function Sales() {
                           placeholder="Ej: Juan Pérez" 
                           value={formData.cliente} 
                           onChange={e => {
-                            const val = e.target.value;
+                            const val = e.target.value.toUpperCase();
                             setFormData({...formData, cliente: val});
                             if (val.trim()) {
                               const filtered = clients.filter(c => c.nombre?.toLowerCase().includes(val.toLowerCase()));
@@ -1161,21 +1273,28 @@ export default function Sales() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                         <div className="space-y-3 relative z-[10]">
                           <label className="text-[9px] font-black uppercase text-slate-600 ml-1">Plataforma</label>
-                          <input 
-                            required 
-                            placeholder="Buscar plataforma..." 
-                            value={platSearchTerms[idx] || ''} 
-                            onChange={e => {
-                              const val = e.target.value;
-                              const newTerms = [...platSearchTerms];
-                              newTerms[idx] = val;
-                              setPlatSearchTerms(newTerms);
-                              setActivePlatIndex(idx);
-                              updateItem(idx, 'plataformaId', '');
-                            }} 
-                            onBlur={() => setTimeout(() => setActivePlatIndex(null), 200)}
-                            className="w-full bg-slate-900 border border-slate-700/50 rounded-2xl px-5 py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" 
-                          />
+                          <div className="relative">
+                            {item.plataformaId && platforms.find(p => p.id === item.plataformaId) && (
+                              <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                                <img src={platforms.find(p => p.id === item.plataformaId).imagenUrl} alt="" className="w-6 h-6 object-contain" />
+                              </div>
+                            )}
+                            <input 
+                              required 
+                              placeholder="Buscar plataforma..." 
+                              value={platSearchTerms[idx] || ''} 
+                              onChange={e => {
+                                const val = e.target.value.toUpperCase();
+                                const newTerms = [...platSearchTerms];
+                                newTerms[idx] = val;
+                                setPlatSearchTerms(newTerms);
+                                setActivePlatIndex(idx);
+                                updateItem(idx, 'plataformaId', '');
+                              }} 
+                              onBlur={() => setTimeout(() => setActivePlatIndex(null), 200)}
+                              className={`w-full bg-slate-900 border border-slate-700/50 rounded-2xl ${item.plataformaId ? 'pl-12 pr-5' : 'px-5'} py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30 uppercase`}
+                            />
+                          </div>
                           {activePlatIndex === idx && platSearchTerms[idx] && (
                             <div className="absolute z-[500] left-0 right-0 top-[100%] mt-2 bg-slate-950 border border-slate-800 rounded-2xl shadow-3xl overflow-hidden backdrop-blur-xl ring-1 ring-white/5">
                               {platforms
@@ -1218,7 +1337,7 @@ export default function Sales() {
                         <div className="space-y-3 relative z-[5]">
                           <label className="text-[9px] font-black uppercase text-slate-600 ml-1">Perfil/Acceso</label>
                           <div className="flex gap-3">
-                            <input required placeholder="Ej: Perfil 1 / Pin 1234" value={item.perfil} onChange={e => updateItem(idx, 'perfil', e.target.value)} className="flex-1 bg-slate-900 border border-slate-700/50 rounded-2xl px-5 py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" />
+                            <input required placeholder="Ej: Perfil 1 / Pin 1234" value={item.perfil} onChange={e => updateItem(idx, 'perfil', e.target.value.toUpperCase())} className="flex-1 bg-slate-900 border border-slate-700/50 rounded-2xl px-5 py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" />
                             {formData.items.length > 1 && (
                               <button type="button" onClick={() => removeItem(item.id)} className="p-4 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-2xl transition-all"><Trash2 size={16}/></button>
                             )}
@@ -1285,112 +1404,245 @@ export default function Sales() {
       {isEditModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-md"></div>
-          <div className="relative w-full max-w-lg bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/20 rounded-[32px] border border-slate-800 shadow-2xl animate-in zoom-in-95 duration-300 h-[85vh] flex flex-col overflow-hidden">
+          <div className="relative w-full max-w-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/20 rounded-[32px] border border-slate-800 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-300 h-[85vh] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-7 py-5 border-b border-slate-800 shrink-0">
-              <h3 className="text-xl font-black italic tracking-tighter uppercase text-white">Editar Perfil</h3>
+              <h3 className="text-xl font-black italic tracking-tighter uppercase text-white">Editar Registro</h3>
               <button onClick={() => setIsEditModalOpen(false)} className="p-3 hover:bg-slate-800 rounded-2xl transition-all"><X size={24} /></button>
             </div>
-            
-            <form onSubmit={handleUpdateSale} className="px-7 py-5 space-y-6 overflow-y-auto scrollbar-hide flex-1">
-              <div className="space-y-3">
-                <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Segmento</label>
-                <div className="relative">
-                  <select required value={editFormData.tipoCliente} onChange={e => setEditFormData({...editFormData, tipoCliente: e.target.value, cliente: '', contacto: ''})} className="w-full bg-slate-900 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs appearance-none">
-                    <option value="Final" className="bg-slate-900">CLIENTE FINAL</option>
-                    <option value="Distribuidor" className="bg-slate-900">DISTRIBUIDOR</option>
-                  </select>
-                  <ChevronDown size={20} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                </div>
-              </div>
 
-              {editFormData.tipoCliente === 'Distribuidor' ? (
-                <div className="space-y-6">
+            <form onSubmit={handleUpdateSale} className="px-7 py-5 space-y-6 overflow-y-auto scrollbar-hide flex-1">
+              <div className="space-y-6">
+                {/* Segmento + Cliente */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 relative z-[50]">
                   <div className="space-y-3">
-                    <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Socio / Grupo</label>
+                    <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Segmento</label>
                     <div className="relative">
-                      <select 
-                        required 
-                        value={editFormData.cliente} 
-                        onChange={e => {
-                          const d = distribuidores.find(x => x.nombre === e.target.value);
-                          setEditFormData({...editFormData, cliente: e.target.value, contacto: d?.whatsappLink || ''});
-                        }} 
-                        className="w-full bg-slate-900 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs appearance-none"
-                      >
-                        <option value="" disabled className="bg-slate-900">SELECCIONAR SOCIO...</option>
-                        {distribuidores.map(d => (
-                          <option key={d.id} value={d.nombre} className="bg-slate-900">{d.nombre.toUpperCase()}</option>
-                        ))}
+                      <select required value={editFormData.tipoCliente} onChange={e => setEditFormData({...editFormData, tipoCliente: e.target.value, cliente: '', contacto: ''})} className="w-full bg-slate-900 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs appearance-none cursor-pointer">
+                        <option value="" disabled className="bg-slate-900">SELECCIONAR...</option>
+                        <option value="Final" className="bg-slate-900">CLIENTE FINAL</option>
+                        <option value="Distribuidor" className="bg-slate-900">DISTRIBUIDOR</option>
                       </select>
                       <ChevronDown size={20} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                     </div>
                   </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Nombre Cliente</label>
-                    <input required value={editFormData.cliente} onChange={e => setEditFormData({...editFormData, cliente: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs" />
-                  </div>
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">WhatsApp / Apodo</label>
-                    <input required value={editFormData.contacto} onChange={e => setEditFormData({...editFormData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs" />
-                  </div>
-                </div>
-              )}
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-3">
-                  <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Plataforma</label>
-                  <div className="relative">
-                    <select required value={editFormData.plataformaId} onChange={e => setEditFormData({...editFormData, plataformaId: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs appearance-none">
-                      {platforms.filter(p => editFormData.tipoCliente === 'Distribuidor' ? p.tipo === 'Distribuidor' : p.tipo !== 'Distribuidor').map(p => (
-                        <option key={p.id} value={p.id} className="bg-slate-900">{p.nombre.toUpperCase()}</option>
-                      ))}
-                    </select>
-                    <ChevronDown size={20} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Acceso / Perfil</label>
-                  <input required value={editFormData.perfil} onChange={e => setEditFormData({...editFormData, perfil: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-3">
-                  <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Fecha de Inicio</label>
-                  <div className="relative group cursor-pointer" onClick={(e) => e.currentTarget.querySelector('input').showPicker()}>
-                    <div className="absolute inset-0 bg-indigo-500/5 group-hover:bg-indigo-500/10 rounded-2xl transition-all border border-slate-700/50 group-hover:border-indigo-500/50 group-hover:shadow-[0_0_20px_-5px_rgba(99,102,241,0.2)]"></div>
-                    <div className="relative flex items-center px-4 py-3 gap-4">
-                      <div className="flex flex-col items-center">
-                        <span className="text-lg font-black text-indigo-400 leading-none">{dayjs(editFormData.fechaCompra).format('DD')}</span>
-                        <span className="text-[8px] font-black text-slate-500 uppercase tracking-tighter">{dayjs(editFormData.fechaCompra).format('MMM')}</span>
-                      </div>
-                      <div className="w-[1px] h-8 bg-slate-800"></div>
-                      <div className="flex-1">
-                        <h4 className="text-[10px] font-black text-white uppercase tracking-widest">{dayjs(editFormData.fechaCompra).format('dddd')}</h4>
-                        <p className="text-[9px] font-bold text-slate-500 uppercase">{dayjs(editFormData.fechaCompra).format('MMMM [del] YYYY')}</p>
-                      </div>
-                      <Calendar size={20} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                  {editFormData.tipoCliente === 'Distribuidor' ? (
+                    <div className="space-y-3 relative">
+                      <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Socio / Grupo</label>
+                      <input
+                        required
+                        placeholder="Buscar socio..."
+                        value={editFormData.cliente}
+                        onChange={e => {
+                          const val = e.target.value.toUpperCase();
+                          setEditFormData({...editFormData, cliente: val});
+                          if (val.trim()) {
+                            const filtered = distribuidores.filter(d => d.nombre?.toLowerCase().includes(val.toLowerCase()));
+                            setDistSuggestions(filtered);
+                            setShowDistSuggestions(true);
+                          } else { setShowDistSuggestions(false); }
+                        }}
+                        onBlur={() => setTimeout(() => setShowDistSuggestions(false), 200)}
+                        className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      />
+                      {showDistSuggestions && distSuggestions.length > 0 && (
+                        <div className="absolute z-[500] left-0 right-0 top-[100%] mt-2 bg-slate-950 border border-slate-800 rounded-2xl shadow-3xl overflow-hidden backdrop-blur-xl ring-1 ring-white/5">
+                          {distSuggestions.map((d, i) => (
+                            <button key={i} type="button" onMouseDown={e => { e.preventDefault(); setEditFormData({...editFormData, cliente: d.nombre, contacto: d.whatsappLink || ''}); setShowDistSuggestions(false); }} className="w-full text-left px-6 py-4 hover:bg-slate-800 text-slate-300 hover:text-white font-bold text-xs transition-colors border-b border-slate-800 last:border-0 uppercase tracking-tighter">
+                              {d.nombre}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <input 
-                      required 
-                      type="date" 
-                      value={editFormData.fechaCompra} 
-                      onChange={e => setEditFormData({...editFormData, fechaCompra: e.target.value})} 
-                      className="absolute inset-0 opacity-0 cursor-pointer" 
-                    />
+                  ) : (
+                    <div className={`transition-all duration-500 ease-out ${editFormData.tipoCliente === 'Final' ? 'opacity-100 max-h-[500px] translate-x-0 overflow-visible' : 'opacity-0 max-h-0 -translate-x-4 pointer-events-none overflow-hidden'}`}>
+                      <div className="space-y-3 relative">
+                        <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Cliente</label>
+                        <input
+                          required={editFormData.tipoCliente === 'Final'}
+                          placeholder="Ej: Juan Pérez"
+                          value={editFormData.cliente}
+                          onChange={e => {
+                            const val = e.target.value.toUpperCase();
+                            setEditFormData({...editFormData, cliente: val});
+                            if (val.trim()) {
+                              const filtered = clients.filter(c => c.nombre?.toLowerCase().includes(val.toLowerCase()));
+                              setClientSuggestions(filtered);
+                              setShowSuggestions(true);
+                            } else { setShowSuggestions(false); }
+                          }}
+                          onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                          className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        />
+                        {showSuggestions && clientSuggestions.length > 0 && (
+                          <div className="absolute z-[500] left-0 right-0 top-[100%] mt-2 bg-slate-950 border border-slate-800 rounded-2xl shadow-3xl overflow-hidden backdrop-blur-xl ring-1 ring-white/5">
+                            {clientSuggestions.map((c, i) => (
+                              <button key={i} type="button" onMouseDown={e => { e.preventDefault(); setEditFormData({...editFormData, cliente: c.nombre, contacto: c.contacto}); setShowSuggestions(false); }} className="w-full text-left px-6 py-4 hover:bg-slate-800 text-slate-300 hover:text-white font-bold text-xs transition-colors border-b border-slate-800 last:border-0 uppercase tracking-tighter">
+                                <div className="flex justify-between items-center"><span>{c.nombre}</span><span className="text-[9px] text-slate-500">{c.contacto}</span></div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="pt-3 flex items-center gap-3">
+                        <button type="button" className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${editFormData.hacerDescuento ? 'bg-indigo-600 border-indigo-500 shadow-[0_0_15px_rgba(79,70,229,0.4)]' : 'bg-slate-900 border-slate-700 hover:border-slate-600'}`} onClick={() => setEditFormData({...editFormData, hacerDescuento: !editFormData.hacerDescuento})}>
+                          {editFormData.hacerDescuento && <CheckCircle2 size={14} className="text-white" strokeWidth={3} />}
+                        </button>
+                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest cursor-pointer hover:text-indigo-300 transition-colors" onClick={() => setEditFormData({...editFormData, hacerDescuento: !editFormData.hacerDescuento})}>
+                          Hacer Descuento (Precio Distribuidor)
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* WhatsApp + Fecha */}
+                <div className={`flex flex-col sm:flex-row ${editFormData.tipoCliente === 'Final' ? 'sm:gap-8' : 'sm:gap-0'} items-start transition-all duration-500 relative z-[40]`}>
+                  <div className={`transition-all duration-500 ease-out overflow-hidden ${editFormData.tipoCliente === 'Final' ? 'w-full sm:w-1/2 opacity-100 translate-x-0' : 'w-0 h-0 opacity-0 -translate-x-10 pointer-events-none'}`}>
+                    <div className="space-y-3 min-w-[200px]">
+                      <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">WhatsApp / Apodo</label>
+                      <input required={editFormData.tipoCliente === 'Final'} placeholder="+57 300 000 0000 o @usuario" value={editFormData.contacto} onChange={e => setEditFormData({...editFormData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                    </div>
+                  </div>
+                  <div className={`w-full sm:w-1/2 space-y-3 transition-all duration-500 ease-out`}>
+                    <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Fecha de Inicio</label>
+                    <div className="relative group cursor-pointer" onClick={(e) => e.currentTarget.querySelector('input').showPicker()}>
+                      <div className="absolute inset-0 bg-indigo-500/5 group-hover:bg-indigo-500/10 rounded-2xl transition-all border border-slate-700/50 group-hover:border-indigo-500/50 group-hover:shadow-[0_0_20px_-5px_rgba(99,102,241,0.2)]"></div>
+                      <div className="relative flex items-center px-6 py-4 gap-6">
+                        <div className="flex flex-col items-center">
+                          <span className="text-2xl font-black text-indigo-400 leading-none">{dayjs(editFormData.fechaVenta).format('DD')}</span>
+                          <span className="text-[8px] font-black text-slate-500 uppercase tracking-tighter">{dayjs(editFormData.fechaVenta).format('MMM')}</span>
+                        </div>
+                        <div className="w-[1px] h-8 bg-slate-800"></div>
+                        <div className="flex-1">
+                          <h4 className="text-[10px] font-black text-white uppercase tracking-widest">{dayjs(editFormData.fechaVenta).format('dddd')}</h4>
+                          <p className="text-[9px] font-bold text-slate-500 uppercase">{dayjs(editFormData.fechaVenta).format('MMMM [del] YYYY')}</p>
+                        </div>
+                        <Calendar size={20} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                      </div>
+                      <input required type="date" value={editFormData.fechaVenta} onChange={e => setEditFormData({...editFormData, fechaVenta: e.target.value})} className="absolute inset-0 opacity-0 cursor-pointer" />
+                    </div>
                   </div>
                 </div>
-                <div className="space-y-3">
-                  <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Días Extra (Garantía)</label>
-                  <input type="number" min="0" value={editFormData.diasExtra} onChange={e => setEditFormData({...editFormData, diasExtra: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" placeholder="0" />
+
+                {/* Canasta de Plataformas */}
+                <div className="flex flex-col sm:flex-row items-center gap-6 justify-between pt-4 border-t border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400"><ShoppingCart size={16}/></div>
+                    <div className="flex flex-col">
+                      <h4 className="text-xs font-black text-white uppercase italic tracking-tighter">Canasta de Plataformas</h4>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {editFormData.items.map((item, idx) => (
+                    <div key={item.id || idx} className={`group relative bg-slate-950/40 p-6 rounded-3xl border border-slate-800/50 hover:border-indigo-500/30 transition-all ${item.isExiting ? 'animate-scale-out pointer-events-none' : 'animate-fade-in-up'}`}>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <div className="space-y-3 relative z-[10]">
+                          <label className="text-[9px] font-black uppercase text-slate-600 ml-1">Plataforma</label>
+                          <div className="relative">
+                            {item.plataformaId && platforms.find(p => p.id === item.plataformaId) && (
+                              <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                                <img src={platforms.find(p => p.id === item.plataformaId).imagenUrl} alt="" className="w-6 h-6 object-contain" />
+                              </div>
+                            )}
+                            <input
+                              required
+                              placeholder="Buscar plataforma..."
+                              value={editPlatSearchTerms[idx] || ''}
+                              onChange={e => {
+                                const val = e.target.value.toUpperCase();
+                                const newTerms = [...editPlatSearchTerms];
+                                newTerms[idx] = val;
+                                setEditPlatSearchTerms(newTerms);
+                                setEditActivePlatIndex(idx);
+                                updateEditItem(idx, 'plataformaId', '');
+                              }}
+                              onBlur={() => setTimeout(() => setEditActivePlatIndex(null), 200)}
+                              className={`w-full bg-slate-900 border border-slate-700/50 rounded-2xl ${item.plataformaId ? 'pl-12 pr-5' : 'px-5'} py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30 uppercase`}
+                            />
+                          </div>
+                          {editActivePlatIndex === idx && editPlatSearchTerms[idx] && (
+                            <div className="absolute z-[500] left-0 right-0 top-[100%] mt-2 bg-slate-950 border border-slate-800 rounded-2xl shadow-3xl overflow-hidden backdrop-blur-xl ring-1 ring-white/5">
+                              {platforms
+                                .filter(p => p.activa && p.tipo === editFormData.tipoCliente && p.nombre.toLowerCase().includes(editPlatSearchTerms[idx].toLowerCase()))
+                                .map((p, i) => (
+                                  <button
+                                    key={i}
+                                    type="button"
+                                    onMouseDown={e => {
+                                      e.preventDefault();
+                                      updateEditItem(idx, 'plataformaId', p.id);
+                                      const newTerms = [...editPlatSearchTerms];
+                                      newTerms[idx] = p.nombre;
+                                      setEditPlatSearchTerms(newTerms);
+                                      setEditActivePlatIndex(null);
+                                    }}
+                                    className="w-full text-left px-5 py-3 hover:bg-slate-800 text-slate-300 hover:text-white font-bold text-[10px] transition-colors border-b border-slate-800 last:border-0 uppercase"
+                                  >
+                                    <div className="flex justify-between items-center">
+                                      <div className="flex items-center gap-3">
+                                        <img src={p.imagenUrl} alt="" className="w-5 h-5 object-contain" />
+                                        <span>{p.nombre}</span>
+                                      </div>
+                                      <span className="text-[9px] text-emerald-400">${p.precioVenta}</span>
+                                    </div>
+                                  </button>
+                                ))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="space-y-3 relative z-[5]">
+                          <label className="text-[9px] font-black uppercase text-slate-600 ml-1">Perfil/Acceso</label>
+                          <div className="flex gap-3">
+                            <input required placeholder="Ej: Perfil 1 / Pin 1234" value={item.perfil} onChange={e => updateEditItem(idx, 'perfil', e.target.value.toUpperCase())} className="flex-1 bg-slate-900 border border-slate-700/50 rounded-2xl px-5 py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" />
+                            {editFormData.items.length > 1 && (
+                              <button type="button" onClick={() => removeEditItem(item.id)} className="p-4 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-2xl transition-all"><Trash2 size={16}/></button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <button type="button" onClick={addEditItem} className="w-max mx-auto px-10 py-3 bg-indigo-600/10 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-2xl transition-all font-black text-[9px] uppercase tracking-widest border border-dashed border-indigo-500/30 hover:border-indigo-500 flex items-center justify-center gap-2">
+                    <PlusCircle size={14} /> Añadir Cuenta
+                  </button>
                 </div>
               </div>
-              <div className="flex gap-4 pt-4">
-                <button type="button" onClick={() => setIsEditModalOpen(false)} className="flex-1 py-3.5 bg-slate-800 text-slate-400 font-black rounded-2xl transition-all uppercase text-[10px] tracking-widest">Descartar</button>
-                <button type="submit" className="flex-1 py-3.5 bg-indigo-600 text-white font-black rounded-2xl shadow-xl transition-all uppercase text-[10px] tracking-widest">Actualizar</button>
+
+              {/* Resumen de precios */}
+              {(() => {
+                const { sumVenta, discount, finalVenta, totalGanancia } = calculateEditTotals();
+                if (sumVenta === 0) return null;
+                return (
+                  <div className="bg-indigo-600/5 border border-indigo-500/20 p-8 rounded-[40px] space-y-6 animate-in slide-in-from-bottom-4">
+                    <div className="flex justify-between items-center pb-4 border-b border-indigo-500/10">
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Subtotal Bruto</span>
+                      <span className="text-sm font-bold text-slate-300">${sumVenta.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</span>
+                    </div>
+                    {discount > 0 && (
+                      <div className="flex justify-between items-center pb-4 border-b border-indigo-500/10">
+                        <div className="flex items-center gap-2"><CheckCircle2 size={14} className="text-emerald-500" /><span className="text-[10px] font-black uppercase text-emerald-500 tracking-widest">Descuento aplicado</span></div>
+                        <span className="text-sm font-bold text-emerald-500">-${discount.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center pt-2">
+                      <div className="flex flex-col">
+                        <span className="text-[11px] font-black uppercase text-white tracking-[0.2em]">Total a pagar</span>
+                        <span className="text-[8px] font-bold text-emerald-400 uppercase italic opacity-60">Ganancia Estimada: ${totalGanancia.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</span>
+                      </div>
+                      <span className="text-3xl font-black text-white italic tracking-tighter">${finalVenta.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="flex gap-6 pt-10 mt-auto">
+                <button type="button" onClick={() => setIsEditModalOpen(false)} className="flex-1 py-5 bg-slate-800 hover:bg-slate-700 text-slate-400 font-black rounded-3xl transition-all uppercase text-[10px] tracking-widest">Descartar</button>
+                <button type="submit" disabled={loading} className="flex-1 py-5 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-3xl shadow-xl transition-all uppercase text-[10px] tracking-widest">
+                  {loading ? 'Guardando...' : 'Guardar Cambios'}
+                </button>
               </div>
             </form>
           </div>

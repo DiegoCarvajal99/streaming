@@ -778,8 +778,8 @@ export default function Dashboard() {
                                  </button>
                                )}
                                <div className="flex flex-col gap-1">
-                                  <span className="text-[11px] font-black text-white uppercase">{sale.cliente}</span>
-                                  <span className="text-[8px] font-bold text-slate-500 uppercase">{sale.contacto}</span>
+                                  <span className="text-[11px] font-black text-white uppercase">{sale.cliente.toUpperCase()}</span>
+                                  <span className="text-[8px] font-bold text-slate-500 uppercase">{sale.contacto.toUpperCase()}</span>
                                </div>
                              </div>
                           </td>
@@ -788,7 +788,7 @@ export default function Dashboard() {
                                 <div className="w-8 h-8 rounded-lg bg-slate-800 p-1 flex items-center justify-center border border-slate-700">
                                    <img src={sale.plataformaImagenUrl} className="w-full h-full object-contain" alt="" />
                                 </div>
-                                <span className="text-[10px] font-black text-slate-300 uppercase">{sale.plataformaNombre}</span>
+                                <span className="text-[10px] font-black text-slate-300 uppercase">{sale.plataformaNombre.toUpperCase()}</span>
                              </div>
                           </td>
                           <td className="px-8 py-5 text-center">
@@ -825,9 +825,9 @@ export default function Dashboard() {
                         <img src={sale.plataformaImagenUrl} className="w-full h-full object-contain" alt="" />
                       </div>
                       <div className="flex flex-col min-w-0">
-                        <span className="text-[11px] font-black text-white uppercase truncate">{sale.cliente}</span>
+                        <span className="text-[11px] font-black text-white uppercase truncate">{sale.cliente.toUpperCase()}</span>
                         <div className="flex items-center gap-2">
-                          <span className="text-[8px] font-bold text-indigo-400 uppercase tracking-widest">{sale.plataformaNombre}</span>
+                          <span className="text-[8px] font-bold text-indigo-400 uppercase tracking-widest">{sale.plataformaNombre.toUpperCase()}</span>
                           <span className="px-1.5 py-0.5 bg-slate-950/50 rounded-md text-[7px] font-mono text-slate-500 uppercase">{(sale.perfil || 'N/A').toUpperCase()}</span>
                         </div>
                       </div>
@@ -898,7 +898,7 @@ export default function Dashboard() {
                          <div className="w-6 h-6 rounded-lg bg-slate-800 flex items-center justify-center text-[10px] font-black text-indigo-400 border border-slate-700">
                            {idx + 1}
                          </div>
-                         <span className="text-[10px] font-black text-slate-300 uppercase tracking-tight">{item.name}</span>
+                         <span className="text-[10px] font-black text-slate-300 uppercase tracking-tight">{item.name.toUpperCase()}</span>
                       </div>
                       <span className="text-[10px] font-black text-white tracking-tighter">{item.count} ventas</span>
                     </div>
@@ -1024,14 +1024,15 @@ export default function Dashboard() {
                           required 
                           value={formData.cliente} 
                           onChange={e => {
-                            const d = distribuidores.find(x => x.nombre === e.target.value);
-                            setFormData({...formData, cliente: e.target.value, contacto: d?.whatsappLink || ''});
+                            const val = e.target.value.toUpperCase();
+                            const d = distribuidores.find(x => x.nombre.toUpperCase() === val);
+                            setFormData({...formData, cliente: val, contacto: d?.whatsappLink || ''});
                           }} 
                           className="w-full bg-slate-900 border border-slate-700/50 rounded-2xl px-6 py-5 text-white font-black text-xs appearance-none cursor-pointer"
                         >
                           <option value="" disabled className="bg-slate-900">SELECCIONAR SOCIO...</option>
                           {distribuidores.map(d => (
-                            <option key={d.id} value={d.nombre} className="bg-slate-900">{d.nombre.toUpperCase()}</option>
+                            <option key={d.id} value={d.nombre.toUpperCase()} className="bg-slate-900">{d.nombre.toUpperCase()}</option>
                           ))}
                         </select>
                         <ChevronDown size={20} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
@@ -1040,7 +1041,7 @@ export default function Dashboard() {
                   ) : (
                     <div className="space-y-3">
                       <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">Cliente</label>
-                      <input required placeholder="Ej: Juan Pérez" value={formData.cliente} onChange={e => setFormData({...formData, cliente: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                      <input required placeholder="Ej: Juan Pérez" value={formData.cliente} onChange={e => setFormData({...formData, cliente: e.target.value.toUpperCase()})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
                     </div>
                   )}
                 </div>
@@ -1049,7 +1050,7 @@ export default function Dashboard() {
                   <div className={`transition-all duration-500 ease-out overflow-hidden ${formData.tipoCliente === 'Final' ? 'w-full sm:w-1/2 opacity-100 translate-x-0' : 'w-0 h-0 opacity-0 -translate-x-10 pointer-events-none'}`}>
                     <div className="space-y-3 min-w-[200px]">
                       <label className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest leading-none">WhatsApp / Apodo</label>
-                      <input required={formData.tipoCliente === 'Final'} placeholder="+57 300 000 0000 o @usuario" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                      <input required={formData.tipoCliente === 'Final'} placeholder="+57 300 000 0000 o @usuario" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value.toUpperCase()})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-white font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500/20" />
                     </div>
                   </div>
                   <div className="w-full sm:w-1/2 space-y-3 transition-all duration-500 ease-out">
@@ -1107,7 +1108,7 @@ export default function Dashboard() {
                         <div className="space-y-3">
                           <label className="text-[9px] font-black uppercase text-slate-600 ml-1">Perfil/Acceso</label>
                           <div className="flex gap-3">
-                            <input required placeholder="Ej: Perfil 1 / Pin 1234" value={item.perfil} onChange={e => updateItem(idx, 'perfil', e.target.value)} className="flex-1 bg-slate-900 border border-slate-700/50 rounded-2xl px-5 py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" />
+                            <input required placeholder="Ej: Perfil 1 / Pin 1234" value={item.perfil} onChange={e => updateItem(idx, 'perfil', e.target.value.toUpperCase())} className="flex-1 bg-slate-900 border border-slate-700/50 rounded-2xl px-5 py-4 text-white font-black text-[11px] outline-none focus:ring-1 focus:ring-indigo-500/30" />
                             {formData.items.length > 1 && (
                               <button type="button" onClick={() => removeItem(item.id)} className="p-4 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-2xl transition-all"><Trash2 size={16}/></button>
                             )}

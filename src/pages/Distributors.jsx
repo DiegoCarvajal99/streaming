@@ -203,7 +203,7 @@ export default function Distributors() {
             <form onSubmit={handleSubmit} className="space-y-8">
               <div className="space-y-3">
                 <label className="text-[10px] font-black uppercase text-slate-500 ml-2">Nombre del Distribuidor / Grupo</label>
-                <input required placeholder="Ej: Pantallas Sebastian" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl px-6 py-5 text-white font-black text-xs" />
+                <input required placeholder="Ej: Pantallas Sebastian" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value.toUpperCase()})} className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl px-6 py-5 text-white font-black text-xs" />
               </div>
               <div className="space-y-3">
                 <label className="text-[10px] font-black uppercase text-slate-500 ml-2">Grupo de WhatsApp (Link)</label>
