@@ -1034,7 +1034,8 @@ export default function Sales() {
                             <button
                               key={i}
                               type="button"
-                              onClick={() => {
+                              onMouseDown={(e) => {
+                                e.preventDefault();
                                 setFormData({...formData, cliente: d.nombre, contacto: d.whatsappLink || ''});
                                 setShowDistSuggestions(false);
                               }}
@@ -1074,7 +1075,8 @@ export default function Sales() {
                               <button
                                 key={i}
                                 type="button"
-                                onClick={() => {
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
                                   setFormData({...formData, cliente: c.nombre, contacto: c.contacto});
                                   setShowSuggestions(false);
                                 }}
@@ -1182,7 +1184,8 @@ export default function Sales() {
                                   <button
                                     key={i}
                                     type="button"
-                                    onClick={() => {
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
                                       updateItem(idx, 'plataformaId', p.id);
                                       const newTerms = [...platSearchTerms];
                                       newTerms[idx] = p.nombre;
